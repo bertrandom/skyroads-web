@@ -12,7 +12,7 @@ DATA  := ../resources/Skyroads
 OUT   := dist
 BUILD := build
 
-SRCS := main.c runtime.c video.c platform.c hw.c audio.c manual.c render.c game.c
+SRCS := main.c runtime.c video.c platform.c hw.c audio.c manual.c render.c game.c ghost.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 
 CFLAGS := -O2 -std=gnu11 -I$(PORT) -pthread -sUSE_SDL=2 \
