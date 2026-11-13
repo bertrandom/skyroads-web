@@ -24,12 +24,24 @@ Protocol (one WebSocket per player):
                                            browser: runs with the same P are
                                            never sent back to it
     binary 0x01 + k * 12-byte frames       frames of the current run
-    text   {"t":"end"}                     the current run ended
+    text   {"t":"end","time":S}            the current run ended after S
+                                           seconds of play (game clock)
     text   {"t":"hello","player":P,"name":N}
                                            sent on connecting: your anonymous
                                            id and (optional) chosen name
     text   {"t":"name","name":N}           change your name ("" = random one)
+    text   {"t":"completed","road":N}      you finished road N (the run you
+                                           started last)
+    text   {"t":"stats"}                   ask for the statistics
   server -> client
+    text   {"t":"stats","all":A,"you":Y}   statistics: A = {players, attempts,
+                                           completions, seconds, roads:
+                                           [[attempts, completions, seconds]
+                                           x 30]}, Y the same for you
+                                           (without players)
+    text   {"t":"online","count":N}        players connected to the relay (one
+                                           per browser), sent on hello and
+                                           when it changes
     text   {"t":"you","name":N,"error":E}  your name now; E ("invalid" or
                                            "taken") if a requested name was
                                            refused
@@ -63,6 +75,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import struct
 import time
 
@@ -155,6 +168,86 @@ def roster(road, now):
     return {p.key: p.name for p in players if p.on_road(road, now)}
 
 
+class Stats:
+    """All-time statistics in SQLite: every player (anonymous browser id) ever
+    seen, and per player and road how many runs were started and finished."""
+
+    def __init__(self, path):
+        self.db = sqlite3.connect(path)
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS players (
+                id         TEXT PRIMARY KEY,
+                first_seen INTEGER NOT NULL,
+                last_seen  INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS road_stats (
+                player      TEXT    NOT NULL,
+                road        INTEGER NOT NULL,
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                completions INTEGER NOT NULL DEFAULT 0,
+                seconds     REAL    NOT NULL DEFAULT 0,
+                PRIMARY KEY (player, road));
+        """)
+        self.db.commit()
+
+    def seen(self, player):
+        now = int(time.time())
+        self.db.execute("INSERT INTO players (id, first_seen, last_seen) VALUES (?, ?, ?) "
+                        "ON CONFLICT (id) DO UPDATE SET last_seen = excluded.last_seen",
+                        (player, now, now))
+        self.db.commit()
+
+    def count(self, player, road, column):
+        self.db.execute("INSERT INTO road_stats (player, road, %s) VALUES (?, ?, 1) "
+                        "ON CONFLICT (player, road) DO UPDATE SET %s = %s + 1"
+                        % (column, column, column), (player, road))
+        self.db.commit()
+
+    def played(self, player, road, seconds):
+        self.db.execute("INSERT INTO road_stats (player, road, seconds) VALUES (?, ?, ?) "
+                        "ON CONFLICT (player, road) DO UPDATE SET seconds = seconds + ?",
+                        (player, road, seconds, seconds))
+        self.db.commit()
+
+    def summary(self, player):
+        def block(rows):
+            roads = [[0, 0, 0] for _ in range(ROADS_IN_GAME)]
+            for road, a, c, s in rows:
+                if 0 <= road < ROADS_IN_GAME:
+                    roads[road] = [a, c, round(s)]
+            return {"attempts": sum(r[0] for r in roads),
+                    "completions": sum(r[1] for r in roads),
+                    "seconds": sum(r[2] for r in roads), "roads": roads}
+        everyone = block(self.db.execute(
+            "SELECT road, SUM(attempts), SUM(completions), SUM(seconds) FROM road_stats "
+            "GROUP BY road"))
+        everyone["players"] = self.db.execute("SELECT COUNT(*) FROM players").fetchone()[0]
+        you = block(self.db.execute(
+            "SELECT road, attempts, completions, seconds FROM road_stats WHERE player = ?",
+            (player or "",)))
+        return {"t": "stats", "all": everyone, "you": you}
+
+
+stats = None                        # Stats, unless --db ""
+ROADS_IN_GAME = 30
+
+
+online_count = 0
+
+
+async def broadcast_online(also=None):
+    """Tell everyone how many players are connected when that changes (and
+    `also`, a player who just said hello, in any case)."""
+    global online_count
+    n = len({p.key for p in players if p.greeted})  # one per browser, not tab
+    msg = json.dumps({"t": "online", "count": n}).encode()
+    if n != online_count:
+        online_count = n
+        for p in list(players):
+            await p.notify(0x1, msg)
+    elif also is not None:
+        await also.notify(0x1, msg)
+
+
 async def broadcast(road):
     """Send the current list of `road` to everyone on it (and an empty one to
     whoever just left it)."""
@@ -177,6 +270,8 @@ class Player:
         self.anon = os.urandom(16).hex()    # until the page sends its id
         self.pid = None
         self.custom = None                  # chosen name, else name_for(key)
+        self.greeted = False                # sent hello (counted as online)
+        self.finishable = False             # last run may still be completed
         self.road = None                    # road of the current/last run
         self.racing = False
         self.ended_at = float("-inf")
@@ -337,6 +432,11 @@ class Player:
         await self.end(quietly=True)
         previous, self.road, self.racing = self.road, road, True
         self.run = Run(self, road, min(max(ago, 0.0), WINDOW))
+        self.run_began = time.monotonic() - max(ago, 0.0)   # for the time check
+        if ago < 1.0:                   # not a run resent after a reconnect
+            self.finishable = True      # one completion may be reported
+            if stats and self.pid and road < ROADS_IN_GAME:
+                stats.count(self.pid, road, "attempts")
         runs[self.run.id] = self.run
         now = self.run.started
         listed = roster(road, time.monotonic())
@@ -420,15 +520,36 @@ class Player:
                             and isinstance(ago, (int, float))):
                         await self.start(road, sub, ago / 1000.0, player)
                 elif msg.get("t") == "end":
+                    seconds = msg.get("time")
+                    if (stats and self.pid and self.run and not self.run.ended
+                            and self.run.road < ROADS_IN_GAME
+                            and isinstance(seconds, (int, float)) and seconds > 0):
+                        # game clock, but no more than the real time since the
+                        # run began (and an hour at most)
+                        real = time.monotonic() - self.run_began + 5
+                        stats.played(self.pid, self.run.road, min(seconds, real, 3600.0))
                     await self.end()
                 elif msg.get("t") == "hello":
                     player = msg.get("player")
                     if (isinstance(player, str) and 0 < len(player) <= 64
                             and player.isascii() and player.isalnum()):
                         self.pid = player
+                        if stats:
+                            stats.seen(player)
+                    self.greeted = True
                     await self.set_name(msg.get("name") or "", quiet_errors=True)
+                    await broadcast_online(also=self)
                 elif msg.get("t") == "name":
                     await self.set_name(msg.get("name") or "")
+                elif msg.get("t") == "completed":
+                    road = msg.get("road")
+                    if (stats and self.pid and self.finishable and road == self.road
+                            and isinstance(road, int) and 0 <= road < ROADS_IN_GAME):
+                        self.finishable = False
+                        stats.count(self.pid, road, "completions")
+                elif msg.get("t") == "stats":
+                    await self.send_text(stats.summary(self.pid) if stats
+                                         else {"t": "stats", "error": "unavailable"})
 
 
 async def handshake(reader, writer):
@@ -466,6 +587,10 @@ async def client(reader, writer):
         if player:
             players.discard(player)
             try:
+                await broadcast_online()
+            except (ConnectionError, OSError):
+                pass
+            try:
                 await player.end(quietly=True)
             except (ConnectionError, OSError):
                 pass
@@ -491,8 +616,14 @@ async def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--unix", metavar="PATH", help="listen on a unix socket instead")
+    ap.add_argument("--db", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats.db"),
+                    help='SQLite file for the statistics ("" to disable)')
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    global stats
+    if args.db:
+        stats = Stats(args.db)
+        log.info("statistics in %s", args.db)
     if args.unix:
         if os.path.exists(args.unix):
             os.unlink(args.unix)            # stale socket from a previous run

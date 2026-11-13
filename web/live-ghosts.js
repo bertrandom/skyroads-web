@@ -57,6 +57,7 @@
   var shownList = null, hideTimer = null;
   function updateListVisibility() {
     if (listEl) listEl.classList.toggle('show', !!(shownList && racing));
+    if (window.skyPlacePlayers) window.skyPlacePlayers();  // beside or over the game
   }
 
   function playerId() {
@@ -80,7 +81,12 @@
       ws.send(JSON.stringify({ t: 'hello', player: player, name: storedName() }));
       if (racing) sendStart();          // reconnected mid-run: resend it
     };
-    ws.onclose = function () { ws = null; showPlayers([]); if (multiplayer) retry(); };
+    ws.onclose = function () {
+      ws = null;
+      showPlayers([]);
+      setOnline(null);
+      if (multiplayer) retry();
+    };
     ws.onerror = function () {};
     ws.onmessage = receive;
   }
@@ -93,6 +99,7 @@
     clearTimeout(retryTimer);
     if (ws) { ws.onclose = null; ws.close(); ws = null; }
     showPlayers([]);
+    setOnline(null);
   }
   function open() { return ws && ws.readyState === 1; }
 
@@ -139,6 +146,8 @@
         Module._ghost_remote_remove(m.id);
       }
       else if (m.t === 'players') showPlayers(m.list);
+      else if (m.t === 'online') setOnline(m.count | 0);
+      else if (m.t === 'stats' && statsReply) { var sr = statsReply; statsReply = null; sr(m); }
       else if (m.t === 'you') {
         myName = String(m.name);
         if (nameReply) { var cb = nameReply; nameReply = null; cb(m.error || null); }
@@ -158,6 +167,28 @@
   }
 
   /* settings menu (shell.html) */
+  /* statistics: the relay counts your race starts; finished roads are
+   * reported here (from the game's save, see cfg_store in port/platform.c) */
+  var statsReply = null;
+  Module.skyRoadCompleted = function (r) {
+    if (open()) ws.send(JSON.stringify({ t: 'completed', road: r }));
+  };
+  /* cb(stats) with {all, you} as sent by the relay, or cb(null) */
+  Module.skyGhostStats = function (cb) {
+    if (!open()) { cb(null); return; }
+    var timer = setTimeout(function () { statsReply = null; cb(null); }, 5000);
+    statsReply = function (m) { clearTimeout(timer); cb(m.error ? null : m); };
+    ws.send('{"t":"stats"}');
+  };
+
+  /* players connected to the relay (null while not connected) */
+  var online = null;
+  function setOnline(n) {
+    online = n;
+    if (window.skyOnlineChanged) window.skyOnlineChanged();
+  }
+  Module.skyGhostOnline = function () { return online; };
+
   /* your name: random two words from the relay unless you chose one
    * (kept in localStorage, checked again by the relay) */
   var myName = null, nameReply = null;
@@ -208,24 +239,27 @@
   Module.skyGhostLive = function () { return multiplayer; };
   Module.skyGhostStart = function (r) {
     clearTimeout(hideTimer);
-    sub++; road = r; racing = true; runStart = Date.now();
+    sub++; road = r; racing = true; runStart = Date.now(); lastTick = 0;
     updateListVisibility();
     pending = []; sent = [];
     if (open()) sendStart();
   };
   /* the run is followed in single player too, so that switching multiplayer
    * on mid-run can send it to the relay */
+  var lastTick = 0;                     // run clock, for the playing time
   Module.skyGhostFrame = function (t, x, y, spr, z) {
+    lastTick = t;
     if (racing) pending.push(t, x, y, spr, z);
   };
   Module.skyGhostEnd = function () {
     flush();
     racing = false; sent = [];
+    // seconds of play by the game clock (36 ticks a second)
+    if (open()) ws.send(JSON.stringify({ t: 'end', time: Math.round(lastTick / 36 * 10) / 10 }));
     // after a crash the game restarts the road right away (~1 ms): keep the
     // list up over that gap, hide it when the player goes back to the menus
     clearTimeout(hideTimer);
     hideTimer = setTimeout(updateListVisibility, 500);
-    if (open()) ws.send('{"t":"end"}');
   };
 
   connect();

@@ -18,7 +18,15 @@ digit, and not already used by someone online (ignoring case). The relay
 checks these rules itself; an empty name goes back to the random one. While you race, the players on your road are
 listed over the top left of the game, each with the colour of their ghost.
 Players stay listed for 15 s after a run (`GRACE`), long enough for the game
-to restart the road after a crash.
+to restart the road after a crash. The settings menu also shows how many
+players are connected to the relay in total (one per browser).
+
+The relay also keeps all-time statistics in SQLite (`stats.db` next to
+`relay.py`, or `--db PATH`; `--db ""` turns them off): every player id it has
+seen, and per player and road the number of races started, roads finished
+and seconds played (by the game clock, capped at the real time). Finishing a
+road is reported by the page when the game counts it in its save. The
+settings menu's Statistics shows the totals for everyone and for you.
 
 `relay.py` uses only the Python 3 standard library (Ubuntu 24.04 ships Python
 3.12). It keeps everything in memory and forgets runs after 6 minutes. It

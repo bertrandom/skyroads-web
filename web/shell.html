@@ -40,7 +40,8 @@
                  display: flex; justify-content: space-between; gap: 16px; }
   #menu button:hover, #menu button:focus-visible { background: #234; }
   #menu .state { opacity: .7; }
-  #menu button[hidden], #menu form[hidden] { display: none; }
+  #menu button[hidden], #menu form[hidden], #menu .info[hidden] { display: none; }
+  #menu .info { padding: 6px 8px; display: flex; justify-content: space-between; gap: 16px; }
   #menu .state { max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #name-form { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 8px; }
   #name-form .row { display: flex; gap: 6px; }
@@ -63,6 +64,39 @@
   #players .dot { width: .75em; height: .75em; border-radius: 50%; flex: none;
                   box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
   #players .you { opacity: .75; }
+  /* wide windows: beside the game, left of its edge (see placePlayers) */
+  #players.outside { left: auto; right: calc(100% + 12px); top: 12px;
+                     font-size: 14px; background: rgba(10, 20, 35, .85); border: 1px solid #357; }
+  /* statistics modal */
+  #stats { width: min(600px, calc(100vw - 32px)); max-height: 85vh; padding: 0; overflow: hidden;
+           background: #0b1524; color: #cde; border: 1px solid #357; border-radius: 6px;
+           font: 13px/1.4 system-ui, sans-serif; }
+  #stats[open] { display: flex; flex-direction: column; }
+  #stats::backdrop { background: rgba(0, 0, 0, .6); }
+  #stats header { display: flex; align-items: center; justify-content: space-between;
+                  padding: 10px 14px; border-bottom: 1px solid #357; }
+  #stats h2 { margin: 0; font-size: 16px; color: #9cf; }
+  #stats-close { all: unset; cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 6px;
+                 border-radius: 3px; }
+  #stats-close:hover, #stats-close:focus-visible { background: #234; }
+  #stats-body { padding: 12px 14px 14px; overflow: auto; }
+  #stats .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                  gap: 10px; margin-bottom: 12px; }
+  #stats .card { border: 1px solid #2a3f5c; border-radius: 4px; padding: 8px 10px; }
+  #stats h3 { margin: 0 0 6px; font-size: 13px; color: #9cf; }
+  #stats dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+  #stats dt { opacity: .75; }
+  #stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  #stats table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  #stats th, #stats td { padding: 3px 6px; text-align: right; white-space: nowrap; }
+  #stats th { color: #9cf; font-weight: 600; }
+  #stats thead tr:first-child th { border-bottom: 1px solid #2a3f5c; }
+  #stats thead tr:last-child th { font-weight: 400; opacity: .75; border-bottom: 1px solid #357; }
+  #stats td.world { text-align: left; color: #9cf; }
+  #stats td.road { text-align: left; opacity: .75; }
+  #stats tbody tr.first td { border-top: 1px solid #1c2d44; }
+  #stats td.zero { opacity: .35; }
+  #stats .note { margin: 0; opacity: .8; }
   #help { margin: 4px 0 0; padding: 6px 8px 4px; border-top: 1px solid #357;
           display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 12px; }
   #help dt { opacity: .7; }
@@ -75,12 +109,19 @@
   <ul id="players" aria-label="Players on this road"></ul>
 </div></div>
 <div id="status" class="chip">Loading…</div>
+<dialog id="stats" aria-labelledby="stats-title">
+  <header><h2 id="stats-title">Statistics</h2>
+    <button id="stats-close" aria-label="Close">&times;</button></header>
+  <div id="stats-body"></div>
+</dialog>
 <div id="settings">
   <div id="menu" class="chip" role="menu">
     <button id="fs" role="menuitemcheckbox">Full screen <span class="state"></span></button>
     <button id="mute" role="menuitemcheckbox">Sound <span class="state"></span></button>
     <button id="multi" role="menuitemcheckbox" hidden>Multiplayer <span class="state"></span></button>
+    <div id="online" class="info" hidden>Players online <span class="state"></span></div>
     <button id="name-item" role="menuitem" hidden>Name <span class="state"></span></button>
+    <button id="stats-item" role="menuitem" hidden>Statistics</button>
     <form id="name-form" hidden autocomplete="off">
       <div class="row">
         <input id="name-input" maxlength="20" spellcheck="false" autocapitalize="off"
@@ -118,7 +159,11 @@
 
   // SDL resumes audio by itself once the page has seen a user gesture; this
   // just does it immediately.
-  function typing(e) { return e.target && e.target.tagName === 'INPUT'; }
+  // typing in a field or using the statistics dialog: not game input
+  function typing(e) {
+    return !!(e.target && (e.target.tagName === 'INPUT' ||
+                           (e.target.closest && e.target.closest('dialog'))));
+  }
   function unlockAudio(e) {
     var ac = audioContext();
     if (ac && ac.state !== 'running') ac.resume();
@@ -150,7 +195,10 @@
   gearEl.addEventListener('click', function (e) {
     e.stopPropagation();
     updateMultiItem();
+    updateOnlineItem();
     updateNameItem();
+    statsItemEl.hidden = typeof Module.skyGhostStats !== 'function' ||
+                         !Module.skyGhostMultiplayer();     // kept by the relay
     setMenuOpen(!settingsEl.classList.contains('open'));
   });
   document.addEventListener('click', function (e) {
@@ -244,6 +292,83 @@
     updateMultiItem();
     setMenuOpen(false);
   });
+
+  // The player list goes left of the game when the space beside it is wide
+  // enough (live-ghosts.js calls this when the list changes), else over the
+  // game's top left corner.
+  var playersEl = document.getElementById('players');
+  function placePlayers() {
+    if (!playersEl.classList.contains('show')) return;
+    playersEl.classList.add('outside');           // measure it in that style
+    if (canvas.getBoundingClientRect().left < playersEl.offsetWidth + 24)
+      playersEl.classList.remove('outside');
+  }
+  window.skyPlacePlayers = placePlayers;
+  window.addEventListener('resize', placePlayers);
+  document.addEventListener('fullscreenchange', placePlayers);
+
+  // How many players are connected to the relay (only while connected).
+  var onlineEl = document.getElementById('online');
+  function updateOnlineItem() {
+    var n = typeof Module.skyGhostOnline === 'function' ? Module.skyGhostOnline() : null;
+    onlineEl.hidden = n === null;
+    if (n !== null) onlineEl.querySelector('.state').textContent = String(n);
+  }
+  window.skyOnlineChanged = updateOnlineItem;
+
+  // Statistics, kept by the relay (all players and you).
+  var statsItemEl = document.getElementById('stats-item');
+  var statsEl = document.getElementById('stats');
+  var statsBodyEl = document.getElementById('stats-body');
+  var WORLDS = ['Red Heat', 'Into the Sun', 'Blue Planet', 'Satellite', 'Misty',
+                'Asteroid Belt', 'Crab Nebula', 'Over the Base', 'The Earth', 'Druidia'];
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+  function num(n) { return (n | 0).toLocaleString(); }
+  function duration(sec) {
+    sec = Math.round(sec || 0);
+    var h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+    return h ? h + 'h ' + m + 'm' : m ? m + 'm ' + s + 's' : s + 's';
+  }
+  function cell(n) { return '<td' + (n ? '' : ' class="zero"') + '>' + num(n) + '</td>'; }
+  function renderStats(st) {
+    if (!st) {
+      statsBodyEl.innerHTML = '<p class="note">Statistics are kept by the multiplayer server. ' +
+        'Switch Multiplayer on in the settings to see them.</p>';
+      return;
+    }
+    var a = st.all, y = st.you, html = '<div class="cards">' +
+      '<div class="card"><h3>All time</h3><dl>' +
+        '<dt>Players</dt><dd>' + num(a.players) + '</dd>' +
+        '<dt>Roads attempted</dt><dd>' + num(a.attempts) + '</dd>' +
+        '<dt>Roads completed</dt><dd>' + num(a.completions) + '</dd>' +
+        '<dt>Time playing</dt><dd>' + duration(a.seconds) + '</dd></dl></div>' +
+      '<div class="card"><h3>Personal</h3><dl>' +
+        '<dt>Roads attempted</dt><dd>' + num(y.attempts) + '</dd>' +
+        '<dt>Roads completed</dt><dd>' + num(y.completions) + '</dd>' +
+        '<dt>Time playing</dt><dd>' + duration(y.seconds) + '</dd></dl></div></div>' +
+      '<table><thead><tr><th colspan="2"></th><th colspan="2">All time</th><th colspan="2">Personal</th></tr>' +
+      '<tr><th colspan="2" style="text-align:left">Road</th><th>Attempts</th><th>Completed</th>' +
+      '<th>Attempts</th><th>Completed</th></tr></thead><tbody>';
+    for (var r = 0; r < 30; r++) {
+      var ar = a.roads[r] || [0, 0], yr = y.roads[r] || [0, 0];
+      html += '<tr' + (r % 3 ? '' : ' class="first"') + '>' +
+        (r % 3 ? '' : '<td class="world" rowspan="3">' + esc(WORLDS[r / 3 | 0]) + '</td>') +
+        '<td class="road">Road ' + (r % 3 + 1) + '</td>' +
+        cell(ar[0]) + cell(ar[1]) + cell(yr[0]) + cell(yr[1]) + '</tr>';
+    }
+    statsBodyEl.innerHTML = html + '</tbody></table>';
+  }
+  statsItemEl.addEventListener('click', function () {
+    setMenuOpen(false);
+    statsBodyEl.innerHTML = '<p class="note">Loading\u2026</p>';
+    statsEl.showModal();
+    Module.skyGhostStats(renderStats);
+  });
+  document.getElementById('stats-close').addEventListener('click', function () { statsEl.close(); });
+  statsEl.addEventListener('click', function (e) { if (e.target === statsEl) statsEl.close(); });
+  statsEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
+  statsEl.addEventListener('keyup', function (e) { e.stopPropagation(); });
+  statsEl.addEventListener('close', function () { canvas.focus(); });
 
   // Your multiplayer name: the relay's random two words, or one you choose.
   var nameItemEl = document.getElementById('name-item');
