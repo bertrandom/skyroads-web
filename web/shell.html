@@ -15,52 +15,49 @@
           justify-content: center; }
   canvas { display: block; outline: none; image-rendering: pixelated;
            width: min(100vw, calc(100vh * 4 / 3)); height: auto; aspect-ratio: 4 / 3; }
-  #overlay { position: absolute; inset: 0; display: flex; flex-direction: column;
-             align-items: center; justify-content: center; gap: 12px;
-             background: rgba(0, 0, 0, .78); cursor: pointer; text-align: center; }
-  #overlay h1 { margin: 0; font-size: 42px; letter-spacing: 2px; color: #f44;
-                text-shadow: 0 0 12px #f80; }
-  #overlay .hint { color: #8ab; max-width: 34em; }
-  #status { color: #fc6; }
-  #fs { position: absolute; right: 10px; bottom: 10px; background: #123; color: #9cf;
-        border: 1px solid #357; border-radius: 4px; padding: 4px 10px; cursor: pointer;
-        opacity: .5; }
+  .chip { position: absolute; background: rgba(10, 20, 35, .85); color: #9cf;
+          border: 1px solid #357; border-radius: 4px; padding: 4px 10px; }
+  #status { left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 16px; }
+  #sound { left: 10px; top: 10px; cursor: pointer; display: none; }
+  #fs { right: 10px; bottom: 10px; cursor: pointer; opacity: .5; }
   #fs:hover { opacity: 1; }
+  #help { left: 10px; bottom: 10px; opacity: .6; font-size: 12px; transition: opacity 1s; }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
-<div id="overlay">
-  <h1>SkyRoads</h1>
-  <div id="status">Loading…</div>
-  <div class="hint">Arrows: steer, accelerate, brake · Space: jump · Enter: select · Esc: back<br>
-    A game controller works too.</div>
-</div>
-<button id="fs" title="Full screen">⛶</button>
+<div id="status" class="chip">Loading…</div>
+<div id="sound" class="chip" title="Browsers start audio only after you interact with the page">🔇 Click for sound</div>
+<div id="help" class="chip">Arrows: steer / speed · Space: jump · Enter: select · Esc: back</div>
+<button id="fs" class="chip" title="Full screen">⛶</button>
 <script>
-  var overlay = document.getElementById('overlay');
   var statusEl = document.getElementById('status');
+  var soundEl = document.getElementById('sound');
   var canvas = document.getElementById('canvas');
-  var ready = false;
 
-  function start() {
-    if (!ready) return;
-    overlay.style.display = 'none';
+  function audioContext() { return Module.SDL2 && Module.SDL2.audioContext; }
+
+  // SDL resumes audio by itself once the page has seen a user gesture; this
+  // just does it immediately and keeps the hint in sync.
+  function unlockAudio() {
+    var ac = audioContext();
+    if (ac && ac.state !== 'running') ac.resume();
     canvas.focus();
-    // this click / key press is the user gesture that unlocks audio
-    if (Module.SDL2 && Module.SDL2.audioContext) Module.SDL2.audioContext.resume();
-    Module.skyStartRequested = 1;     // the game thread starts now
   }
-  overlay.addEventListener('click', start);
+  function updateSoundHint() {
+    var ac = audioContext();
+    soundEl.style.display = (ac && ac.state !== 'running') ? 'block' : 'none';
+  }
+  ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
+    window.addEventListener(ev, unlockAudio, true);
+  });
   window.addEventListener('keydown', function (e) {
-    if (overlay.style.display !== 'none' && ready) { start(); }
     // keep arrows / space from scrolling the page
     if ([32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
   }, true);
   document.getElementById('fs').addEventListener('click', function () {
     var el = document.documentElement;
     (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
-    canvas.focus();
   });
 
   var Module = {
@@ -74,25 +71,27 @@
     print: function (t) { console.log(t); },
     printErr: function (t) { console.warn(t); },
     setStatus: function (t) {
-      if (!ready) statusEl.textContent = t ? t.replace(/\(.*\)/, '') : 'Loading…';
+      if (t) statusEl.textContent = t.replace(/\(.*\)/, '').trim() || 'Loading…';
     },
-    onReadyToStart: function () {
-      ready = true;
-      statusEl.textContent = 'Click or press a key to start';
+    onGameStarted: function () {
+      statusEl.style.display = 'none';
+      canvas.focus();
+      updateSoundHint();
+      setInterval(updateSoundHint, 500);
+      setTimeout(function () { document.getElementById('help').style.opacity = 0; }, 15000);
     },
     onGameExit: function () {
-      overlay.style.display = 'flex';
-      overlay.style.cursor = 'pointer';
+      statusEl.style.display = 'block';
+      statusEl.style.cursor = 'pointer';
       statusEl.textContent = 'Thanks for playing! Click to play again.';
-      overlay.onclick = function () { location.reload(); };
+      statusEl.onclick = function () { location.reload(); };
+      soundEl.style.display = 'none';
     }
   };
-  if (!window.crossOriginIsolated) {
-    statusEl.textContent = 'Enabling threads…';
-  }
+  if (!window.crossOriginIsolated) statusEl.textContent = 'Enabling threads…';
   window.onerror = function (msg) {
+    statusEl.style.display = 'block';
     statusEl.textContent = 'Error: ' + msg;
-    overlay.style.display = 'flex';
   };
 </script>
 {{{ SCRIPT }}}
