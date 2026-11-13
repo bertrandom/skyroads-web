@@ -212,7 +212,16 @@
   .dpad .d { left: 33%; bottom: 3%; } .dpad .d svg { transform: rotate(180deg); }
   .dpad .l { top: 33%; left: 3%; }    .dpad .l svg { transform: rotate(-90deg); }
   .dpad .r { top: 33%; right: 3%; }   .dpad .r svg { transform: rotate(90deg); }
-  .dpad span.on { background: rgba(120, 190, 255, .35); opacity: 1; }
+  .dpad span { opacity: .45; transition: opacity .1s; }
+  .dpad span.on { opacity: 1; color: #cef; }
+  /* the joystick knob follows the finger inside the ring and springs back */
+  .dpad::before { content: ""; position: absolute; inset: 22%; border-radius: 50%;
+                  border: 1px dashed rgba(120, 170, 230, .25); }
+  .knob { position: absolute; left: 29%; top: 29%; width: 42%; height: 42%; border-radius: 50%;
+          background: radial-gradient(circle at 38% 32%, #7fb4ee, #3463a3 60%, #1d3a66);
+          border: 1px solid #8bc4ff; box-shadow: 0 4px 12px rgba(0, 0, 0, .55), inset 0 -3px 6px rgba(0, 0, 0, .3);
+          transition: transform .14s ease-out; pointer-events: none; }
+  .dpad.active .knob { transition: none; }
   .pad button { all: unset; display: flex; align-items: center; justify-content: center; color: #9cf;
                 background: rgba(20, 40, 70, .55); border: 1px solid #357;
                 font: 600 12px system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
@@ -230,6 +239,7 @@
     <span class="d"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></span>
     <span class="l"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></span>
     <span class="r"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></span>
+    <div class="knob"></div>
   </div>
 </div>
 <div id="screen">
@@ -391,22 +401,28 @@
       ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (ev) { b.addEventListener(ev, lift); });
     });
 
-    // d-pad: one finger, read by angle from the centre; the 30-degree wedges
-    // between two arrows press both (accelerate and steer at once)
-    var dpad = document.querySelector('.dpad');
+    // joystick: one finger anywhere on the left pad moves the knob (kept inside
+    // the ring); its angle picks the arrows, and the 30-degree wedges between
+    // two arrows press both (accelerate and steer at once)
+    var padDir = document.getElementById('pad-dir');
+    var dpad = padDir.querySelector('.dpad'), knob = dpad.querySelector('.knob');
     var dirs = { u: 0, d: 1, l: 2, r: 3 }, cur = {}, finger = null;
     function aim(e) {
-      var want = {};
+      var want = {}, kx = 0, ky = 0;
       if (e) {
         var r = dpad.getBoundingClientRect();
         var x = (e.clientX - r.left) / r.width * 2 - 1, y = (e.clientY - r.top) / r.height * 2 - 1;
         var len = Math.sqrt(x * x + y * y);
+        var reach = Math.min(len, 1) / (len || 1) * r.width * 0.29;   // knob travel: ring minus knob
+        kx = x * reach; ky = y * reach;
         if (len > 0.2) {
           x /= len; y /= len;
           if (x > 0.5) want.r = 1; else if (x < -0.5) want.l = 1;
           if (y > 0.5) want.d = 1; else if (y < -0.5) want.u = 1;
         }
       }
+      knob.style.transform = 'translate(' + kx.toFixed(1) + 'px, ' + ky.toFixed(1) + 'px)';
+      dpad.classList.toggle('active', !!e);
       for (var k in dirs) {
         if (!!want[k] === !!cur[k]) continue;
         hold(dirs[k], 'dpad', !!want[k]);
@@ -414,16 +430,16 @@
       }
       cur = want;
     }
-    dpad.addEventListener('pointerdown', function (e) {
+    padDir.addEventListener('pointerdown', function (e) {
       e.preventDefault();
       if (finger !== null) return;
       finger = e.pointerId;
-      try { dpad.setPointerCapture(e.pointerId); } catch (err) {}
+      try { padDir.setPointerCapture(e.pointerId); } catch (err) {}
       aim(e);
     });
-    dpad.addEventListener('pointermove', function (e) { if (e.pointerId === finger) aim(e); });
+    padDir.addEventListener('pointermove', function (e) { if (e.pointerId === finger) aim(e); });
     function release(e) { if (e.pointerId === finger) { finger = null; aim(null); } }
-    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (ev) { dpad.addEventListener(ev, release); });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (ev) { padDir.addEventListener(ev, release); });
 
     // let go of everything when the page is hidden
     function releaseAll() {
