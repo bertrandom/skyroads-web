@@ -471,13 +471,19 @@
     qFsEl.setAttribute('aria-pressed', on);
     qFsEl.title = on ? 'Exit full screen' : 'Full screen';
   }
+  // iPhone Safari has no Fullscreen API for pages (Add to Home Screen opens
+  // the game full screen instead, see manifest.webmanifest), so no icon there
+  var rootEl = document.documentElement;
+  var canFullscreen = !!((document.fullscreenEnabled || document.webkitFullscreenEnabled) &&
+                         (rootEl.requestFullscreen || rootEl.webkitRequestFullscreen));
+  if (!canFullscreen) qFsEl.remove();
   function toggleFullscreen() {
-    if (isFullscreen()) {
-      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    } else {
-      var el = document.documentElement;
-      (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
-    }
+    try {
+      var p = isFullscreen()
+        ? (document.exitFullscreen || document.webkitExitFullscreen).call(document)
+        : (rootEl.requestFullscreen || rootEl.webkitRequestFullscreen).call(rootEl);
+      if (p && p.catch) p.catch(function () {});
+    } catch (err) {}
   }
   qFsEl.addEventListener('click', function () {
     toggleFullscreen();
