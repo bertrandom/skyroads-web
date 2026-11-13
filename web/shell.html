@@ -179,8 +179,6 @@
 </dialog>
 <div id="settings">
   <div id="menu" class="chip" role="menu">
-    <button id="fs" role="menuitemcheckbox">Full screen <span class="state"></span></button>
-    <button id="mute" role="menuitemcheckbox">Sound <span class="state"></span></button>
     <button id="multi" role="menuitemcheckbox" hidden>Multiplayer <span class="state"></span></button>
     <div id="online" class="info" hidden>Players online <span class="state"></span></div>
     <button id="name-item" role="menuitem" hidden>Name <span class="state"></span></button>
@@ -241,11 +239,9 @@
     if (!typing(e) && [32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
   }, true);
 
-  // ---- settings menu: full screen, sound, multiplayer ----
+  // ---- settings menu (full screen and sound are the icons beside the gear) ----
   var settingsEl = document.getElementById('settings');
   var gearEl = document.getElementById('gear');
-  var fsEl = document.getElementById('fs');
-  var muteEl = document.getElementById('mute');
   var qFsEl = document.getElementById('q-fs');
   var qMuteEl = document.getElementById('q-mute');
   var muted = false;             // mirrors the game's own sound setting
@@ -275,8 +271,6 @@
   }
   function updateFsItem() {
     var on = isFullscreen();
-    fsEl.querySelector('.state').textContent = on ? 'On' : 'Off';
-    fsEl.setAttribute('aria-checked', on);
     qFsEl.classList.toggle('on', on);
     qFsEl.setAttribute('aria-pressed', on);
     qFsEl.title = on ? 'Exit full screen' : 'Full screen';
@@ -289,10 +283,6 @@
       (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
     }
   }
-  fsEl.addEventListener('click', function () {
-    toggleFullscreen();
-    setMenuOpen(false);
-  });
   qFsEl.addEventListener('click', function () {
     toggleFullscreen();
     setMenuOpen(false);
@@ -317,8 +307,6 @@
     if (muted !== !on) { muted = !on; updateMuteItem(); }
   }
   function updateMuteItem() {
-    muteEl.querySelector('.state').textContent = muted ? 'Off' : 'On';
-    muteEl.setAttribute('aria-checked', !muted);
     qMuteEl.classList.toggle('on', !muted);
     qMuteEl.setAttribute('aria-pressed', !muted);
     qMuteEl.title = muted ? 'Sound off' : 'Sound on';
@@ -329,10 +317,6 @@
     if (typeof Module._sky_set_sound === 'function') Module._sky_set_sound(muted ? 0 : 1);
     updateMuteItem();
   }
-  muteEl.addEventListener('click', function () {
-    toggleMute();
-    setMenuOpen(false);
-  });
   qMuteEl.addEventListener('click', function () {
     toggleMute();
     setMenuOpen(false);
