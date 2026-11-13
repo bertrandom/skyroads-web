@@ -103,6 +103,25 @@
                border: 1px solid #357; font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
   #stats td.by { text-align: left; max-width: 10em; overflow: hidden; text-overflow: ellipsis; }
   #stats .note { margin: 0; opacity: .8; }
+  /* account (passkeys) */
+  #account { width: min(400px, calc(100vw - 32px)); padding: 0; background: #0b1524; color: #cde;
+             border: 1px solid #357; border-radius: 6px; font: 14px/1.45 system-ui, sans-serif; }
+  #account::backdrop { background: rgba(0, 0, 0, .6); }
+  #account header { display: flex; align-items: center; justify-content: space-between;
+                    padding: 10px 14px; border-bottom: 1px solid #357; }
+  #account h2 { margin: 0; font-size: 16px; color: #9cf; }
+  #account .close { all: unset; cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 6px; border-radius: 3px; }
+  #account .close:hover, #account .close:focus-visible { background: #234; }
+  #account .body { padding: 14px; }
+  #account .intro { margin: 0 0 14px; }
+  #account .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  #account .actions button { all: unset; cursor: pointer; padding: 7px 14px; border-radius: 4px;
+                             background: #234; color: #dde; font-weight: 600; }
+  #account .actions button.primary { background: #6cf; color: #0b1524; }
+  #account .actions button:hover, #account .actions button:focus-visible { filter: brightness(1.2); outline: 2px solid #9cf; outline-offset: 1px; }
+  #account .actions button:disabled { opacity: .5; cursor: default; }
+  #account .msg { margin: 12px 0 0; min-height: 1.4em; font-size: 12px; opacity: .85; }
+  #account .msg.error { color: #f99; opacity: 1; }
   /* congratulations on a new record / personal best */
   #congrats { --accent: #6cf; width: min(360px, calc(100vw - 32px)); padding: 22px 22px 18px;
               background: #0b1524; color: #cde; border: 2px solid var(--accent); border-radius: 8px;
@@ -134,6 +153,15 @@
   <ul id="players" aria-label="Players on this road"></ul>
 </div></div>
 <div id="status" class="chip">Loading…</div>
+<dialog id="account" aria-labelledby="account-title">
+  <header><h2 id="account-title">Account</h2>
+    <button class="close" aria-label="Close">&times;</button></header>
+  <div class="body">
+    <p class="intro"></p>
+    <div class="actions"></div>
+    <p class="msg" role="status"></p>
+  </div>
+</dialog>
 <dialog id="congrats" aria-labelledby="congrats-title">
   <span class="badge"></span>
   <h2 id="congrats-title">Congratulations!</h2>
@@ -157,6 +185,7 @@
     <div id="online" class="info" hidden>Players online <span class="state"></span></div>
     <button id="name-item" role="menuitem" hidden>Name <span class="state"></span></button>
     <button id="stats-item" role="menuitem" hidden>Statistics</button>
+    <button id="account-item" role="menuitem" hidden>Account <span class="state"></span></button>
     <form id="name-form" hidden autocomplete="off">
       <div class="row">
         <input id="name-input" maxlength="20" spellcheck="false" autocapitalize="off"
@@ -234,6 +263,7 @@
     updateNameItem();
     statsItemEl.hidden = typeof Module.skyGhostStats !== 'function' ||
                          !Module.skyGhostMultiplayer();     // kept by the relay
+    updateAccountItem();
     setMenuOpen(!settingsEl.classList.contains('open'));
   });
   document.addEventListener('click', function (e) {
@@ -445,6 +475,83 @@
   statsBodyEl.addEventListener('click', function (e) { var td = tipCell(e); if (td) showTip(td); else hideTip(); });
   statsBodyEl.addEventListener('scroll', hideTip);
 
+  // Account: create one with a passkey, sign in with it elsewhere; while
+  // signed in your name, settings, road completions and statistics follow
+  // you (live-ghosts.js and server/relay.py).
+  var accountItemEl = document.getElementById('account-item');
+  var accountEl = document.getElementById('account');
+  var accountMsgEl = accountEl.querySelector('.msg');
+  function accountState() { return typeof Module.skyAccount === 'function' ? Module.skyAccount() : null; }
+  function updateAccountItem() {
+    var a = accountState();
+    accountItemEl.hidden = !a || !a.available || !Module.skyGhostMultiplayer();
+    if (a) accountItemEl.querySelector('.state').textContent = a.signedIn ? 'Signed in' : 'Sign in';
+  }
+  function accountMessage(text, error) {
+    accountMsgEl.textContent = text || '';
+    accountMsgEl.classList.toggle('error', !!error);
+  }
+  function accountButton(label, primary, onclick) {
+    var b = document.createElement('button');
+    b.textContent = label;
+    if (primary) b.className = 'primary';
+    b.addEventListener('click', onclick);
+    return b;
+  }
+  function passkey(action, busy, done) {
+    var buttons = accountEl.querySelectorAll('.actions button');
+    buttons.forEach(function (b) { b.disabled = true; });
+    accountMessage(busy);
+    Module.skyPasskey(action, function (err) {
+      buttons.forEach(function (b) { b.disabled = false; });
+      if (err === 'cancelled') accountMessage('');
+      else if (err) accountMessage(err, true);
+      else accountMessage(done);
+    });
+  }
+  function renderAccount() {
+    var a = accountState(), intro = accountEl.querySelector('.intro'), actions = accountEl.querySelector('.actions');
+    actions.textContent = '';
+    if (!a || !a.available) {
+      intro.textContent = 'Accounts need a connection to the multiplayer server.';
+    } else if (!a.signedIn) {
+      intro.textContent = 'Sign in with a passkey to keep your name, road progress, settings and ' +
+                          'statistics in sync across your browsers.';
+      actions.appendChild(accountButton('Sign in with a passkey', true, function () {
+        passkey('login', 'Waiting for your passkey\u2026', 'Signed in.');
+      }));
+      actions.appendChild(accountButton('Create an account', false, function () {
+        passkey('register', 'Creating a passkey for SkyRoads\u2026', 'Account created; you are signed in.');
+      }));
+    } else {
+      var name = typeof Module.skyGhostName === 'function' ? Module.skyGhostName() : '';
+      intro.textContent = 'Signed in as ' + (name || 'you') + ' with ' + a.passkeys + ' passkey' +
+                          (a.passkeys === 1 ? '' : 's') + '. Your progress, settings and statistics are kept in sync.';
+      actions.appendChild(accountButton('Add another passkey', false, function () {
+        passkey('register', 'Creating another passkey\u2026', 'Passkey added.');
+      }));
+      actions.appendChild(accountButton('Sign out', false, function () {
+        Module.skySignOut();
+        accountMessage('Signed out.');
+      }));
+    }
+  }
+  window.skyAccountChanged = function () {
+    updateAccountItem();
+    if (accountEl.open) renderAccount();
+  };
+  accountItemEl.addEventListener('click', function () {
+    setMenuOpen(false);
+    accountMessage('');
+    renderAccount();
+    accountEl.showModal();
+  });
+  accountEl.querySelector('.close').addEventListener('click', function () { accountEl.close(); });
+  accountEl.addEventListener('click', function (e) { if (e.target === accountEl) accountEl.close(); });
+  accountEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
+  accountEl.addEventListener('keyup', function (e) { e.stopPropagation(); });
+  accountEl.addEventListener('close', function () { canvas.focus(); });
+
   // Congratulations when a finish sets the road's all-time record or your
   // personal best (the relay sends {t: 'record', ...}, see live-ghosts.js).
   var congratsEl = document.getElementById('congrats');
@@ -497,7 +604,10 @@
     nameItemEl.querySelector('.state').textContent = n || 'random';
     nameItemEl.title = n || '';
   }
-  window.skyNameChanged = updateNameItem;
+  window.skyNameChanged = function () {
+    updateNameItem();
+    if (accountEl.open) renderAccount();             // "Signed in as <name>"
+  };
   function nameMessage(text, error) {
     nameMsgEl.textContent = text;
     nameMsgEl.classList.toggle('error', !!error);

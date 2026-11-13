@@ -20,6 +20,8 @@
   if (!url || typeof Module === 'undefined') return;
 
   var player = playerId();
+  var account = { signedIn: false, passkeys: 0, available: false };
+  var passkeyReply = null, signingOut = false;
   var multiplayer = true;
   try { multiplayer = localStorage.getItem('skyroads.multiplayer') !== '0'; } catch (e) {}
   var ws = null, backoff = 1000, retryTimer = null;
@@ -83,6 +85,7 @@
     };
     ws.onclose = function () {
       ws = null;
+      account = { signedIn: false, passkeys: 0, available: false };
       showPlayers([]);
       setOnline(null);
       if (multiplayer) retry();
@@ -150,8 +153,15 @@
       else if (m.t === 'nonce' && m.sub === sub) Module._ghost_set_nonce(m.n >>> 0);
       else if (m.t === 'record' && window.skyRecord) window.skyRecord(m);   // congratulations
       else if (m.t === 'stats' && statsReply) { var sr = statsReply; statsReply = null; sr(m); }
+      else if (m.t === 'account') onAccount(m);
+      else if (m.t === 'sync') applySync(m);
+      else if (m.t === 'passkey-options') passkeyPrompt(m);
+      else if (m.t === 'passkey-result' && passkeyReply) {
+        var pr = passkeyReply; passkeyReply = null; pr(m.ok ? null : (m.error || 'failed'));
+      }
       else if (m.t === 'you') {
         myName = String(m.name);
+        if (account.signedIn && 'custom' in m) storeName(m.custom ? myName : '');  // the account's
         if (nameReply) { var cb = nameReply; nameReply = null; cb(m.error || null); }
         if (window.skyNameChanged) window.skyNameChanged();
       }
@@ -220,6 +230,106 @@
       cb(err);
     };
     ws.send(JSON.stringify({ t: 'name', name: n }));
+  };
+
+  /* ---- account (passkeys) and sync of settings / road completions ---- */
+  function b64uToBuf(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/');
+    var bin = atob(s + '==='.slice((s.length + 3) % 4)), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  function bufToB64u(buf) {
+    var bytes = new Uint8Array(buf), s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function localState() {
+    var roads = [];
+    try { roads = JSON.parse(localStorage.getItem('skyroads.roads') || '[]'); } catch (e) {}
+    if (!Array.isArray(roads)) roads = [];
+    for (var i = 0; i < 30; i++) roads[i] = Math.max(0, roads[i] | 0);
+    var get = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+    return { roads: roads.slice(0, 30), controls: get('skyroads.controls'), sound: get('skyroads.sound') };
+  }
+  function sendSync(initial) {
+    if (!open() || !account.signedIn) return;
+    var st = localState();
+    ws.send(JSON.stringify({ t: 'sync', roads: st.roads, controls: st.controls, sound: st.sound,
+                             initial: !!initial }));
+  }
+  function onAccount(m) {
+    var was = account.signedIn;
+    account = { signedIn: !!m.signed_in, passkeys: m.passkeys | 0, available: !!m.available };
+    if (account.signedIn) sendSync(true);             // merge this browser in
+    if (signingOut && !account.signedIn) {
+      // start over as a new anonymous player, on the same connection
+      signingOut = false;
+      try { localStorage.removeItem('skyroads.player'); } catch (e) {}
+      player = playerId();
+      if (open()) ws.send(JSON.stringify({ t: 'hello', player: player, name: storedName() }));
+    }
+    if (window.skyAccountChanged) window.skyAccountChanged(was !== account.signedIn);
+  }
+  /* the account's merged values: store them and let the game re-read them */
+  function applySync(m) {
+    var st = localState(), changed = false;
+    try {
+      if (Array.isArray(m.roads) && JSON.stringify(m.roads) !== JSON.stringify(st.roads)) {
+        localStorage.setItem('skyroads.roads', JSON.stringify(m.roads)); changed = true;
+      }
+      if (m.controls && m.controls !== st.controls) { localStorage.setItem('skyroads.controls', m.controls); changed = true; }
+      if (m.sound && m.sound !== st.sound) { localStorage.setItem('skyroads.sound', m.sound); changed = true; }
+    } catch (e) {}
+    if (changed && Module._sky_reload_cfg) Module._sky_reload_cfg();
+  }
+  /* the game saved skyroads.cfg (port/platform.c): send it to the account */
+  Module.skySaved = function () { sendSync(false); };
+
+  function passkeyPrompt(m) {
+    var o = m.options, reply = passkeyReply;
+    var fail = function (e) {
+      passkeyReply = null;
+      if (reply) reply(e && e.name === 'NotAllowedError' ? 'cancelled' : 'The passkey could not be used.');
+    };
+    if (m.action === 'register') {
+      navigator.credentials.create({ publicKey: {
+        challenge: b64uToBuf(o.challenge), rp: o.rp,
+        user: { id: b64uToBuf(o.user.id), name: o.user.name, displayName: o.user.displayName },
+        pubKeyCredParams: o.pubKeyCredParams, timeout: 120000, attestation: 'none',
+        authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'preferred' },
+        excludeCredentials: (o.excludeCredentials || []).map(function (c) { return { type: 'public-key', id: b64uToBuf(c.id) }; })
+      } }).then(function (cred) {
+        if (!open()) return fail();
+        ws.send(JSON.stringify({ t: 'passkey-register-finish', id: cred.id,
+          clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+          attestationObject: bufToB64u(cred.response.attestationObject) }));
+      }, fail);
+    } else {
+      navigator.credentials.get({ publicKey: {
+        challenge: b64uToBuf(o.challenge), rpId: o.rpId, timeout: 120000, userVerification: 'preferred'
+      } }).then(function (cred) {
+        if (!open()) return fail();
+        ws.send(JSON.stringify({ t: 'passkey-login-finish', id: cred.id,
+          clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+          authenticatorData: bufToB64u(cred.response.authenticatorData),
+          signature: bufToB64u(cred.response.signature) }));
+      }, fail);
+    }
+  }
+  Module.skyAccount = function () { return open() ? account : null; };
+  /* action: 'register' (create an account / add a passkey) or 'login';
+   * cb(error): null, 'cancelled' or a message */
+  Module.skyPasskey = function (action, cb) {
+    if (!open()) { cb('Not connected to the server.'); return; }
+    if (!window.PublicKeyCredential) { cb('This browser does not support passkeys.'); return; }
+    passkeyReply = cb;
+    ws.send(JSON.stringify({ t: 'passkey-' + action + '-begin' }));
+  };
+  Module.skySignOut = function () {
+    if (!open()) return;
+    signingOut = true;
+    ws.send('{"t":"signout"}');
   };
 
   Module.skyGhostMultiplayer = function () { return multiplayer; };

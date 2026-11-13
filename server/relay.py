@@ -38,8 +38,30 @@ Protocol (one WebSocket per player):
     text   {"t":"completed","road":N}      you finished road N (the run you
                                            started last)
     text   {"t":"stats"}                   ask for the statistics
+    text   {"t":"passkey-register-begin"} / {"t":"passkey-login-begin"}
+                                           start creating a passkey (a new
+                                           account, or another passkey for
+                                           yours) / signing in with one
+    text   {"t":"passkey-register-finish", id, clientDataJSON,
+            attestationObject}             the browser's answer (base64url)
+    text   {"t":"passkey-login-finish", id, clientDataJSON,
+            authenticatorData, signature}  the browser's answer (base64url)
+    text   {"t":"signout"}                 unlink this browser from its account
+    text   {"t":"sync","roads":[30],"controls":C,"sound":S,"initial":B}
+                                           this browser's settings and road
+                                           completions (signed in only);
+                                           initial: right after signing in
   server -> client
     text   {"t":"nonce","n":N,"sub":S}     the number to sign this run's end with
+    text   {"t":"account","signed_in":B,"passkeys":N}
+                                           account state, on hello and when
+                                           it changes
+    text   {"t":"passkey-options","action":A,"options":O}
+                                           WebAuthn options for the browser
+    text   {"t":"passkey-result","action":A,"ok":B,"error":E}
+    text   {"t":"sync","roads":[30],"controls":C,"sound":S}
+                                           the account's merged settings and
+                                           road completions, to apply
     text   {"t":"record","road":R,"seconds":S,"overall":O,"personal":P,
             "previous_overall":[seconds, name] or null,
             "previous_personal":seconds or null}
@@ -83,6 +105,14 @@ carries a valid signature from the game.  Finish and playing times come from
 the frames, not from the page.  A determined player can still fake a run;
 this only stops casual cheating.
 
+Accounts: a player can create an account with a passkey (WebAuthn,
+discoverable credential, verified with python3-cryptography) and sign in
+with it in other browsers.  Signing in links the browser's anonymous id to
+the account: its statistics, personal bests and records move to the account
+(added together, fastest kept), and the account keeps the player's name,
+settings and road completions (highest count per road) in sync across the
+browsers signed in to it.
+
 Every player gets a name of two harmless words ("plucky-otter") derived from
 their anonymous id, so it is stable across reloads.  Players can choose their
 own name instead: 3-20 letters, digits and single dashes, starting and ending
@@ -104,6 +134,15 @@ import re
 import sqlite3
 import struct
 import time
+from urllib.parse import urlsplit
+
+try:                                # passkeys need python3-cryptography
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
+    PASSKEYS = True
+except ImportError:
+    PASSKEYS = False
 
 GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 FRAME = 12
@@ -194,6 +233,110 @@ def roster(road, now):
     return {p.key: p.name for p in players if p.on_road(road, now)}
 
 
+# ---------------------------------------------------------------- passkeys
+# Pages allowed to use passkeys with this relay (--origin); the passkeys are
+# bound to the host name (the WebAuthn "relying party").
+ORIGINS = ["https://skyroads.smittn.com", "http://localhost:8000"]
+CHALLENGE_TTL = 300                 # seconds to answer a passkey prompt
+
+
+def b64u(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def unb64u(text):
+    if not isinstance(text, str) or len(text) > 8192:
+        raise ValueError("bad base64url")
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def cbor_item(data, i):
+    """Decode one CBOR item at data[i:]; returns (value, next index).  Just
+    what WebAuthn uses (no indefinite lengths, no floats)."""
+    head = data[i]
+    major, info = head >> 5, head & 31
+    i += 1
+    if info < 24:
+        arg = info
+    elif info in (24, 25, 26, 27):
+        size = 1 << (info - 24)
+        arg = int.from_bytes(data[i:i + size], "big")
+        i += size
+    else:
+        raise ValueError("unsupported CBOR")
+    if major == 0:
+        return arg, i
+    if major == 1:
+        return -1 - arg, i
+    if major in (2, 3):
+        raw = bytes(data[i:i + arg])
+        if len(raw) != arg:
+            raise ValueError("short CBOR")
+        return (raw if major == 2 else raw.decode()), i + arg
+    if major == 4:
+        out = []
+        for _ in range(arg):
+            value, i = cbor_item(data, i)
+            out.append(value)
+        return out, i
+    if major == 5:
+        out = {}
+        for _ in range(arg):
+            key, i = cbor_item(data, i)
+            out[key], i = cbor_item(data, i)
+        return out, i
+    if major == 6:                  # tag: ignore it
+        return cbor_item(data, i)
+    if arg in (20, 21, 22):
+        return {20: False, 21: True, 22: None}[arg], i
+    raise ValueError("unsupported CBOR")
+
+
+def parse_auth_data(ad):
+    """WebAuthn authenticator data: (rpIdHash, flags, signCount,
+    (credential id, COSE public key bytes) or None)."""
+    if len(ad) < 37:
+        raise ValueError("short authenticator data")
+    flags = ad[32]
+    count = int.from_bytes(ad[33:37], "big")
+    cred = None
+    if flags & 0x40:                # attested credential data
+        n = int.from_bytes(ad[53:55], "big")
+        cred_id = bytes(ad[55:55 + n])
+        _, end = cbor_item(ad, 55 + n)
+        cred = (cred_id, bytes(ad[55 + n:end]))
+    return bytes(ad[:32]), flags, count, cred
+
+
+def cose_verify(cose_bytes, signature, data):
+    """Check a WebAuthn assertion signature with a COSE public key."""
+    key, _ = cbor_item(cose_bytes, 0)
+    kty, alg = key.get(1), key.get(3)
+    if kty == 2 and alg == -7 and key.get(-1) == 1:         # ES256
+        pub = ec.EllipticCurvePublicNumbers(int.from_bytes(key[-2], "big"),
+                                            int.from_bytes(key[-3], "big"),
+                                            ec.SECP256R1()).public_key()
+        pub.verify(signature, data, ec.ECDSA(hashes.SHA256()))
+    elif kty == 3 and alg == -257:                          # RS256
+        pub = rsa.RSAPublicNumbers(int.from_bytes(key[-2], "big"),
+                                   int.from_bytes(key[-1], "big")).public_key()
+        pub.verify(signature, data, padding.PKCS1v15(), hashes.SHA256())
+    elif kty == 1 and alg == -8 and key.get(-1) == 6:       # EdDSA (Ed25519)
+        ed25519.Ed25519PublicKey.from_public_bytes(key[-2]).verify(signature, data)
+    else:
+        raise ValueError("unsupported key type")
+
+
+def check_client_data(raw, kind, challenge, origin):
+    cd = json.loads(raw)
+    if cd.get("type") != kind:
+        raise ValueError("wrong type")
+    if unb64u(cd.get("challenge", "")) != challenge:
+        raise ValueError("wrong challenge")
+    if cd.get("origin") != origin:
+        raise ValueError("wrong origin")
+
+
 class Stats:
     """All-time statistics in SQLite: every player (anonymous browser id) ever
     seen, and per player and road how many runs were started and finished."""
@@ -220,6 +363,24 @@ class Stats:
                 player  TEXT    NOT NULL,
                 name    TEXT    NOT NULL,
                 at      INTEGER NOT NULL);
+            -- accounts (passkeys) and the browsers signed in to them
+            CREATE TABLE IF NOT EXISTS accounts (
+                id       TEXT PRIMARY KEY,
+                created  INTEGER NOT NULL,
+                name     TEXT,
+                controls TEXT,
+                sound    TEXT,
+                roads    TEXT);
+            CREATE TABLE IF NOT EXISTS credentials (
+                id         TEXT PRIMARY KEY,
+                account    TEXT    NOT NULL,
+                public_key BLOB    NOT NULL,
+                sign_count INTEGER NOT NULL,
+                created    INTEGER NOT NULL,
+                last_used  INTEGER);
+            CREATE TABLE IF NOT EXISTS links (
+                player  TEXT PRIMARY KEY,
+                account TEXT NOT NULL);
             -- every road record ever set, the current one included
             CREATE TABLE IF NOT EXISTS record_history (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -291,6 +452,90 @@ class Stats:
                 "previous_overall": [round(current[0], 2), current[1]] if current else None,
                 "previous_personal": round(mine, 2) if mine is not None else None}
 
+    # -- accounts --
+    def account_for(self, player):
+        row = self.db.execute("SELECT account FROM links WHERE player = ?", (player,)).fetchone()
+        return row[0] if row else None
+
+    def new_account(self, account):
+        self.db.execute("INSERT INTO accounts (id, created) VALUES (?, ?)",
+                        (account, int(time.time())))
+        self.db.commit()
+
+    def add_credential(self, cred_id, account, public_key, count):
+        self.db.execute("INSERT INTO credentials (id, account, public_key, sign_count, created) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (cred_id, account, public_key, count, int(time.time())))
+        self.db.commit()
+
+    def credential(self, cred_id):
+        return self.db.execute("SELECT account, public_key, sign_count FROM credentials "
+                               "WHERE id = ?", (cred_id,)).fetchone()
+
+    def credentials_of(self, account):
+        return [r[0] for r in self.db.execute(
+            "SELECT id FROM credentials WHERE account = ?", (account,))]
+
+    def used_credential(self, cred_id, count):
+        self.db.execute("UPDATE credentials SET sign_count = ?, last_used = ? WHERE id = ?",
+                        (count, int(time.time()), cred_id))
+        self.db.commit()
+
+    def link(self, player, account):
+        """Sign a browser in: link its anonymous id to the account and move
+        its statistics there."""
+        self.db.execute("INSERT INTO links (player, account) VALUES (?, ?) "
+                        "ON CONFLICT (player) DO UPDATE SET account = excluded.account",
+                        (player, account))
+        self.merge(player, account_key(account))
+
+    def unlink(self, player):
+        self.db.execute("DELETE FROM links WHERE player = ?", (player,))
+        self.db.commit()
+
+    def merge(self, src, dst):
+        """Move player `src`'s statistics to `dst`: counts and time added,
+        the faster best kept, records and their history rewritten."""
+        self.db.execute(
+            "INSERT INTO road_stats (player, road, attempts, completions, seconds, best, best_at) "
+            "SELECT ?, road, attempts, completions, seconds, best, best_at FROM road_stats "
+            "WHERE player = ? AND true ON CONFLICT (player, road) DO UPDATE SET "
+            "attempts = attempts + excluded.attempts, "
+            "completions = completions + excluded.completions, "
+            "seconds = seconds + excluded.seconds, "
+            "best_at = CASE WHEN excluded.best IS NOT NULL AND (best IS NULL OR excluded.best < best) "
+            "          THEN excluded.best_at ELSE best_at END, "
+            "best = CASE WHEN excluded.best IS NOT NULL AND (best IS NULL OR excluded.best < best) "
+            "       THEN excluded.best ELSE best END", (dst, src))
+        self.db.execute("DELETE FROM road_stats WHERE player = ?", (src,))
+        self.db.execute("UPDATE best_times SET player = ? WHERE player = ?", (dst, src))
+        self.db.execute("UPDATE record_history SET player = ? WHERE player = ?", (dst, src))
+        self.db.execute(
+            "INSERT INTO players (id, first_seen, last_seen) "
+            "SELECT ?, first_seen, last_seen FROM players WHERE id = ? AND true "
+            "ON CONFLICT (id) DO UPDATE SET first_seen = min(first_seen, excluded.first_seen), "
+            "last_seen = max(last_seen, excluded.last_seen)", (dst, src))
+        self.db.execute("DELETE FROM players WHERE id = ?", (src,))
+        self.db.commit()
+
+    def account_data(self, account):
+        row = self.db.execute("SELECT name, controls, sound, roads FROM accounts WHERE id = ?",
+                              (account,)).fetchone()
+        if not row:
+            return None
+        roads = json.loads(row[3]) if row[3] else []
+        return {"name": row[0], "controls": row[1], "sound": row[2],
+                "roads": [int(roads[i]) if i < len(roads) else 0 for i in range(ROADS_IN_GAME)]}
+
+    def save_account(self, account, **values):
+        for column in ("name", "controls", "sound", "roads"):
+            if column in values:
+                value = values[column]
+                if column == "roads":
+                    value = json.dumps(value)
+                self.db.execute("UPDATE accounts SET %s = ? WHERE id = ?" % column, (value, account))
+        self.db.commit()
+
     def renamed(self, player, name):
         self.db.execute("UPDATE best_times SET name = ? WHERE player = ?", (name, player))
         self.db.commit()
@@ -328,6 +573,11 @@ class Stats:
 
 
 stats = None                        # Stats, unless --db ""
+
+
+def account_key(account):
+    """A signed-in player's identity (key and statistics id)."""
+    return "acct" + account
 ROADS_IN_GAME = 30
 RELAY_KEY = None                    # bytes from relay.key: end messages must be signed
 
@@ -412,7 +662,7 @@ class Closed(Exception):
 
 
 class Player:
-    def __init__(self, reader, writer):
+    def __init__(self, reader, writer, origin=None):
         self.reader = reader
         self.writer = writer
         self.run = None
@@ -420,6 +670,9 @@ class Player:
         self.anon = os.urandom(16).hex()    # until the page sends its id
         self.pid = None
         self.custom = None                  # chosen name, else name_for(key)
+        self.account = None                 # signed-in account id
+        self.origin = origin                # page origin (for passkeys)
+        self.challenge = None               # pending passkey prompt
         self.greeted = False                # sent hello (counted as online)
         self.finishable = False             # last run may still be completed
         self.finish = None                  # (road, seconds) of the last run
@@ -452,7 +705,12 @@ class Player:
 
     @property
     def key(self):
-        return self.pid or self.anon
+        return account_key(self.account) if self.account else (self.pid or self.anon)
+
+    @property
+    def ident(self):
+        """Statistics id: the account when signed in, else the browser."""
+        return account_key(self.account) if self.account else self.pid
 
     @property
     def name(self):
@@ -496,14 +754,155 @@ class Player:
             error = "taken"
         else:
             self.custom = name
-        if not error and stats and self.pid:
-            stats.renamed(self.pid, self.name)  # fastest times show the new name
-        reply = {"t": "you", "name": self.name}
+        if not error and stats and self.ident:
+            stats.renamed(self.ident, self.name)  # fastest times show the new name
+        if not error and stats and self.account:
+            stats.save_account(self.account, name=self.custom)
+            for p in list(players):             # the account's other browsers
+                if p is not self and p.account == self.account:
+                    p.custom = self.custom
+                    await p.notify(0x1, json.dumps({"t": "you", "name": p.name,
+                                                    "custom": bool(p.custom)}).encode())
+        reply = {"t": "you", "name": self.name, "custom": bool(self.custom)}
         if error and not quiet_errors:
             reply["error"] = error
         await self.send_text(reply)
         if not error and self.road is not None:
             await broadcast(self.road)
+
+    # -- accounts --
+    async def send_account(self):
+        n = len(stats.credentials_of(self.account)) if (stats and self.account) else 0
+        await self.send_text({"t": "account", "signed_in": bool(self.account), "passkeys": n,
+                              "available": bool(PASSKEYS and stats and self.rp_id())})
+
+    def rp_id(self):
+        """The passkeys' host name, if this page may use them."""
+        if self.origin in ORIGINS:
+            return urlsplit(self.origin).hostname
+        return None
+
+    async def signed_in(self, account):
+        """Link this browser to `account` (moving its statistics) and adopt
+        the account's name, or give it this browser's."""
+        stats.link(self.pid, account)
+        self.account = account
+        data = stats.account_data(account) or {}
+        name = data.get("name") or self.custom or ""
+        await self.set_name(name, quiet_errors=True)   # the name first: the page
+        await self.send_account()                       # shows it with the state
+        await broadcast_online()
+        if self.road is not None:
+            await broadcast(self.road)
+
+    async def passkey_begin(self, action):
+        rp = self.rp_id()
+        if not (PASSKEYS and stats and rp and self.pid):
+            await self.send_text({"t": "passkey-result", "action": action, "ok": False,
+                                  "error": "Passkeys are not available here."})
+            return
+        challenge = secrets.token_bytes(32)
+        if action == "register":
+            account = self.account or secrets.token_hex(16)
+            options = {
+                "challenge": b64u(challenge),
+                "rp": {"id": rp, "name": "SkyRoads"},
+                "user": {"id": b64u(bytes.fromhex(account)), "name": self.name,
+                         "displayName": self.name},
+                "pubKeyCredParams": [{"type": "public-key", "alg": -7},
+                                     {"type": "public-key", "alg": -8},
+                                     {"type": "public-key", "alg": -257}],
+                "excludeCredentials": [{"type": "public-key", "id": c}
+                                       for c in (stats.credentials_of(self.account)
+                                                 if self.account else [])],
+            }
+        else:
+            account = None
+            options = {"challenge": b64u(challenge), "rpId": rp}
+        self.challenge = (action, challenge, time.monotonic() + CHALLENGE_TTL, account)
+        await self.send_text({"t": "passkey-options", "action": action, "options": options})
+
+    async def passkey_finish(self, action, msg):
+        pending, self.challenge = self.challenge, None
+        try:
+            if not (pending and pending[0] == action and time.monotonic() < pending[2]):
+                raise ValueError("no passkey prompt is open")
+            _, challenge, _, account = pending
+            rp = self.rp_id()
+            client_data = unb64u(msg.get("clientDataJSON"))
+            if action == "register":
+                check_client_data(client_data, "webauthn.create", challenge, self.origin)
+                att, _ = cbor_item(unb64u(msg.get("attestationObject")), 0)
+                rp_hash, flags, count, cred = parse_auth_data(att["authData"])
+                if rp_hash != hashlib.sha256(rp.encode()).digest() or not flags & 1 or not cred:
+                    raise ValueError("bad authenticator data")
+                cred_id, public_key = cred    # attestation "none": trusted on first use
+                if stats.credential(b64u(cred_id)):
+                    raise ValueError("passkey already registered")
+                if not self.account:
+                    stats.new_account(account)
+                stats.add_credential(b64u(cred_id), account, public_key, count)
+                if self.account != account:
+                    await self.signed_in(account)
+                else:
+                    await self.send_account()
+            else:
+                check_client_data(client_data, "webauthn.get", challenge, self.origin)
+                cred_id = msg.get("id")
+                row = stats.credential(cred_id) if isinstance(cred_id, str) else None
+                if not row:
+                    raise ValueError("unknown passkey")
+                account, public_key, last_count = row
+                auth_data = unb64u(msg.get("authenticatorData"))
+                rp_hash, flags, count, _ = parse_auth_data(auth_data)
+                if rp_hash != hashlib.sha256(rp.encode()).digest() or not flags & 1:
+                    raise ValueError("bad authenticator data")
+                try:
+                    cose_verify(public_key, unb64u(msg.get("signature")),
+                                auth_data + hashlib.sha256(client_data).digest())
+                except InvalidSignature:
+                    raise ValueError("bad signature")
+                if count and last_count and count <= last_count:
+                    raise ValueError("passkey counter went backwards (cloned?)")
+                stats.used_credential(cred_id, count)
+                if self.account != account:
+                    await self.signed_in(account)
+            await self.send_text({"t": "passkey-result", "action": action, "ok": True})
+        except (ValueError, KeyError, TypeError, IndexError) as e:
+            log.info("passkey %s refused: %s", action, e)
+            await self.send_text({"t": "passkey-result", "action": action, "ok": False,
+                                  "error": "The passkey could not be used."})
+
+    async def signout(self):
+        if stats and self.account and self.pid:
+            stats.unlink(self.pid)
+        self.account = None
+        await self.send_account()
+
+    async def sync(self, msg):
+        """Merge this browser's settings and road completions into the
+        account and send the result to every browser signed in to it."""
+        if not (stats and self.account):
+            return
+        data = stats.account_data(self.account)
+        roads = msg.get("roads")
+        if isinstance(roads, list) and len(roads) == ROADS_IN_GAME:
+            data["roads"] = [max(a, min(65535, int(b)) if isinstance(b, int) and b > 0 else 0)
+                             for a, b in zip(data["roads"], roads)]
+        initial = bool(msg.get("initial"))
+        for field, allowed in (("controls", ("keyboard", "joystick", "mouse")),
+                               ("sound", ("on", "off"))):
+            value = msg.get(field)
+            # signing in: the account's settings win; afterwards a change wins
+            if value in allowed and (not initial or not data[field]):
+                data[field] = value
+        stats.save_account(self.account, controls=data["controls"], sound=data["sound"],
+                           roads=data["roads"])
+        out = json.dumps({"t": "sync", "roads": data["roads"], "controls": data["controls"],
+                          "sound": data["sound"]}).encode()
+        for p in list(players):
+            if p.account == self.account:
+                await p.notify(0x1, out)
 
     async def send_roster(self):
         now = time.monotonic()
@@ -592,8 +991,8 @@ class Player:
             self.finishable = True      # one completion may be reported
             self.nonce = secrets.randbits(32)
             await self.send_text({"t": "nonce", "n": self.nonce, "sub": sub})
-            if stats and self.pid and road < ROADS_IN_GAME:
-                stats.count(self.pid, road, "attempts")
+            if stats and self.ident and road < ROADS_IN_GAME:
+                stats.count(self.ident, road, "attempts")
         runs[self.run.id] = self.run
         now = self.run.started
         listed = roster(road, time.monotonic())
@@ -679,14 +1078,14 @@ class Player:
                 elif msg.get("t") == "end":
                     r, self.finish = self.run, None
                     ticks, finish = msg.get("ticks"), msg.get("finish")
-                    if (stats and self.pid and r and not r.ended and r.road < ROADS_IN_GAME
+                    if (stats and self.ident and r and not r.ended and r.road < ROADS_IN_GAME
                             and isinstance(ticks, int) and isinstance(finish, int)):
                         play, finished, problem = check_run(r, ticks, finish, self.nonce,
                                                             msg.get("sig"))
                         # the frames' clock, but no more than the real time
                         # since the run began (and an hour at most)
                         real = time.monotonic() - self.run_began + 5
-                        stats.played(self.pid, r.road, min(play, real, 3600.0))
+                        stats.played(self.ident, r.road, min(play, real, 3600.0))
                         if finished is not None and finished <= real:
                             self.finish = (r.road, finished)
                         elif finish:
@@ -699,25 +1098,42 @@ class Player:
                             and player.isascii() and player.isalnum()):
                         self.pid = player
                         if stats:
-                            stats.seen(player)
+                            self.account = stats.account_for(player)
+                            if not self.account:
+                                stats.seen(player)
                     self.greeted = True
-                    await self.set_name(msg.get("name") or "", quiet_errors=True)
+                    name = msg.get("name") or ""
+                    if self.account:            # the account's name wins
+                        data = stats.account_data(self.account) or {}
+                        name = data.get("name") or name
+                        if name and not data.get("name") and valid_name(name):
+                            stats.save_account(self.account, name=name)
+                    await self.set_name(name, quiet_errors=True)
+                    await self.send_account()
                     await broadcast_online(also=self)
                 elif msg.get("t") == "name":
                     await self.set_name(msg.get("name") or "")
                 elif msg.get("t") == "completed":
                     road = msg.get("road")
                     # only a finish the run's frames (and signature) confirm
-                    if (stats and self.pid and self.finishable and road == self.road
+                    if (stats and self.ident and self.finishable and road == self.road
                             and self.finish and self.finish[0] == road):
                         self.finishable = False
-                        stats.count(self.pid, road, "completions")
-                        record = stats.finished(road, self.finish[1], self.pid, self.name)
+                        stats.count(self.ident, road, "completions")
+                        record = stats.finished(road, self.finish[1], self.ident, self.name)
                         self.finish = None
                         if record:
                             await self.send_text(record)
+                elif msg.get("t") in ("passkey-register-begin", "passkey-login-begin"):
+                    await self.passkey_begin(msg["t"].split("-")[1])
+                elif msg.get("t") in ("passkey-register-finish", "passkey-login-finish"):
+                    await self.passkey_finish(msg["t"].split("-")[1], msg)
+                elif msg.get("t") == "signout":
+                    await self.signout()
+                elif msg.get("t") == "sync":
+                    await self.sync(msg)
                 elif msg.get("t") == "stats":
-                    await self.send_text(stats.summary(self.pid) if stats
+                    await self.send_text(stats.summary(self.ident) if stats
                                          else {"t": "stats", "error": "unavailable"})
 
 
@@ -738,15 +1154,16 @@ async def handshake(reader, writer):
     writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                   "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
     await writer.drain()
-    return True
+    return headers.get("origin", "")
 
 
 async def client(reader, writer):
     player = None
     try:
-        if not await handshake(reader, writer):
+        origin = await handshake(reader, writer)
+        if origin is False:
             return
-        player = Player(reader, writer)
+        player = Player(reader, writer, origin)
         players.add(player)
         await player.serve()
     except (Closed, asyncio.IncompleteReadError, asyncio.LimitOverrunError,
@@ -788,10 +1205,15 @@ async def main():
     here = os.path.dirname(os.path.abspath(__file__))
     ap.add_argument("--db", default=os.path.join(here, "stats.db"),
                     help='SQLite file for the statistics ("" to disable)')
+    ap.add_argument("--origin", action="append",
+                    help="page origin allowed to use passkeys (repeatable; default: %s)"
+                         % ", ".join(ORIGINS))
     ap.add_argument("--key-file", default=os.path.join(here, "relay.key"),
                     help="hex key the game signs run ends with (same as the "
                          "build's GHOST_KEY); without it signatures are not checked")
     args = ap.parse_args()
+    if args.origin:
+        ORIGINS[:] = args.origin
     global RELAY_KEY
     if args.key_file and os.path.exists(args.key_file):
         with open(args.key_file) as f:

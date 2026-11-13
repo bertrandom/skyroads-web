@@ -52,6 +52,23 @@ stores no identities: each browser sends a random id (kept in its
 localStorage) only so that you are never shown your own runs, even after a
 reload.
 
+## Accounts (passkeys)
+
+Players can create an account with a passkey and sign in with it in other
+browsers (the settings menu's Account). The relay verifies the WebAuthn
+registrations and sign-ins itself (discoverable credentials, attestation
+"none", signatures checked with `python3-cryptography`: ES256, EdDSA,
+RS256) and keeps accounts, passkeys and signed-in browsers in `stats.db`.
+Signing in links the browser's anonymous id to the account; its statistics,
+personal bests and records move to the account (added together, fastest
+kept). While signed in the account keeps the name, controls, sound and road
+completions (highest count per road) and pushes changes to every browser
+signed in to it; the game re-reads them without a reload. Passkeys are bound
+to the page's host name: only the origins given with `--origin` (default
+`https://skyroads.smittn.com` and `http://localhost:8000`) may use them, so
+moving the game to another host means creating new passkeys there. Without
+`python3-cryptography` the relay runs with accounts turned off.
+
 ## Install (Ubuntu 24.04 + nginx)
 
 Deployed on nuke as https://skyroads.smittn.com/: the game in `/web/skyroads`,
