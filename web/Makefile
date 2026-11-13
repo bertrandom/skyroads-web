@@ -30,7 +30,7 @@ LDFLAGS := -O2 -pthread -sUSE_SDL=2 \
            -sSTACK_SIZE=1MB -sDEFAULT_PTHREAD_STACK_SIZE=1MB \
            -sGLOBAL_BASE=128KB \
            -sENVIRONMENT=web,worker \
-           -lidbfs.js -sEXPORTED_RUNTIME_METHODS=ENV,HEAPU8 \
+           -sEXPORTED_RUNTIME_METHODS=ENV,HEAPU8 \
            -sEXPORTED_FUNCTIONS=_main,_malloc,_free \
            --preload-file $(BUILD)/data@/data \
            --shell-file shell.html

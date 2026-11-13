@@ -319,13 +319,6 @@
       statusEl.style.display = 'none';
       canvas.focus();
       // follow the game's sound setting (it loads skyroads.cfg at start-up)
-      try {                     // the old page-only mute becomes the game's setting
-        if (localStorage.getItem('skyroads.muted') === '1') {
-          soundWanted = false;
-          Module._sky_set_sound(0);
-        }
-        localStorage.removeItem('skyroads.muted');
-      } catch (e) {}
       syncSound();
       setInterval(syncSound, 300);
     },
