@@ -47,8 +47,9 @@
     if (!ready) return;
     overlay.style.display = 'none';
     canvas.focus();
-    // SDL resumes audio itself after user activation; do it now as well
+    // this click / key press is the user gesture that unlocks audio
     if (Module.SDL2 && Module.SDL2.audioContext) Module.SDL2.audioContext.resume();
+    Module.skyStartRequested = 1;     // the game thread starts now
   }
   overlay.addEventListener('click', start);
   window.addEventListener('keydown', function (e) {
@@ -75,7 +76,7 @@
     setStatus: function (t) {
       if (!ready) statusEl.textContent = t ? t.replace(/\(.*\)/, '') : 'Loading…';
     },
-    onGameStarted: function () {
+    onReadyToStart: function () {
       ready = true;
       statusEl.textContent = 'Click or press a key to start';
     },

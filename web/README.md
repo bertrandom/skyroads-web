@@ -32,7 +32,8 @@ packed into `index.data`. Check the licence of the data before publishing it.
 | | |
 |---|---|
 | Threads | The game and the 180 Hz timer run in Web Workers (pthreads); the browser main thread runs the SDL event/render loop (`emscripten_set_main_loop`). |
-| Audio | Starts after the first click or key press (browser autoplay rules). OPL register writes are queued with timer timestamps and replayed by the synthesizer on the main thread. |
+| Start screen | Browsers only allow audio after a user gesture, so the game thread waits on a \"click or press a key\" screen; the intro then starts from the beginning with sound. The dismissing key is not passed to the game. |
+| Audio | OPL register writes are queued with timer timestamps and replayed by the synthesizer on the main thread. |
 | Saves | `skyroads.cfg` is kept in IndexedDB (`/save`, IDBFS), loaded before the game starts and flushed after every write. |
 | Quit | Esc on the main menu ends the game and shows a "play again" screen. |
 | Memory | Host data is placed above 64 KiB (`-sGLOBAL_BASE=128KB`) so `near_ptr()` can tell 16-bit DS offsets from wasm32 pointers. |
