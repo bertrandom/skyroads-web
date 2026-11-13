@@ -139,8 +139,7 @@
   var muteEl = document.getElementById('mute');
   var qFsEl = document.getElementById('q-fs');
   var qMuteEl = document.getElementById('q-mute');
-  var muted = false;
-  try { muted = localStorage.getItem('skyroads.muted') === '1'; } catch (e) {}
+  var muted = false;             // mirrors the game's own sound setting
 
   function setMenuOpen(open) {
     if (!open) closeNameForm();
@@ -188,20 +187,21 @@
   document.addEventListener('fullscreenchange', updateFsItem);
   document.addEventListener('webkitfullscreenchange', updateFsItem);
 
-  // SDL feeds a ScriptProcessorNode wired to the destination. Muting routes it
-  // through a GainNode set to 0 (it must stay connected to keep being pulled,
-  // otherwise the queued OPL writes would pile up).
-  var gainNode = null;
-  function applyMute() {
-    var ac = audioContext();
-    var sp = Module.SDL2 && Module.SDL2.audio && Module.SDL2.audio.scriptProcessorNode;
-    if (ac && sp && !gainNode) {
-      gainNode = ac.createGain();
-      sp.disconnect();
-      sp.connect(gainNode);
-      gainNode.connect(ac.destination);
+  // Sound is the game's own setting (Controls screen, saved in skyroads.cfg):
+  // the menu asks the game to switch it (applied on the game thread, see
+  // sound_poll in port/runtime.c) and follows it, so changing it in the
+  // Controls screen updates the menu too.
+  var soundWanted = null;       // requested, not yet applied by the game
+  function gameSoundOn() {
+    return typeof Module._sky_sound_on === 'function' ? !!Module._sky_sound_on() : !muted;
+  }
+  function syncSound() {
+    var on = gameSoundOn();
+    if (soundWanted !== null) {
+      if (on === soundWanted) soundWanted = null;
+      else on = soundWanted;    // show the request until the game applies it
     }
-    if (gainNode) gainNode.gain.value = muted ? 0 : 1;
+    if (muted !== !on) { muted = !on; updateMuteItem(); }
   }
   function updateMuteItem() {
     muteEl.querySelector('.state').textContent = muted ? 'Off' : 'On';
@@ -212,8 +212,8 @@
   }
   function toggleMute() {
     muted = !muted;
-    try { localStorage.setItem('skyroads.muted', muted ? '1' : '0'); } catch (e) {}
-    applyMute();
+    soundWanted = !muted;
+    if (typeof Module._sky_set_sound === 'function') Module._sky_set_sound(muted ? 0 : 1);
     updateMuteItem();
   }
   muteEl.addEventListener('click', function () {
@@ -318,9 +318,16 @@
     onGameStarted: function () {
       statusEl.style.display = 'none';
       canvas.focus();
-      // SDL creates its audio node lazily; apply the saved mute once it exists
-      applyMute();
-      setInterval(applyMute, 500);
+      // follow the game's sound setting (it loads skyroads.cfg at start-up)
+      try {                     // the old page-only mute becomes the game's setting
+        if (localStorage.getItem('skyroads.muted') === '1') {
+          soundWanted = false;
+          Module._sky_set_sound(0);
+        }
+        localStorage.removeItem('skyroads.muted');
+      } catch (e) {}
+      syncSound();
+      setInterval(syncSound, 300);
     },
     onGameExit: function () {
       statusEl.style.display = 'block';
