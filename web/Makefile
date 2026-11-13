@@ -65,9 +65,9 @@ $(OUT)/index.html: $(OBJS) $(BUILD)/data shell.html
 	cp coi-serviceworker.js $(OUT)/ 2>/dev/null || true
 
 # the About dialog's text, written in about.md
-$(OUT)/about.html: about.md gen_about.py
+$(OUT)/about.html: about.md gen_about.py pyproject.toml
 	mkdir -p $(OUT)
-	python3 gen_about.py about.md $@
+	uv run --quiet gen_about.py about.md $@
 
 $(OUT)/live-ghosts.js: live-ghosts.js
 	mkdir -p $(OUT)
