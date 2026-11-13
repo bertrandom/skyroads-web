@@ -65,33 +65,45 @@ kept). While signed in the account keeps the name, controls, sound and road
 completions (highest count per road) and pushes changes to every browser
 signed in to it; the game re-reads them without a reload. Passkeys are bound
 to the page's host name: only the origins given with `--origin` (default
-`https://skyroads.smittn.com` and `http://localhost:8000`) may use them, so
+`https://skyroads.org`, `https://skyroads.smittn.com` and
+`http://localhost:8000`) may use them, so
 moving the game to another host means creating new passkeys there. Without
 `python3-cryptography` the relay runs with accounts turned off.
 
 ## Install (Ubuntu 24.04 + nginx)
 
-Deployed on nuke as https://skyroads.smittn.com/: the game in `/web/skyroads`,
-the relay in `/web/skyroads-relay`, both owned by and running as `web`. The
-relay listens on the unix socket `/web/skyroads-relay/skyroads-relay.sock`,
-which nginx proxies at `/skyroads-relay`. TLS uses the `*.smittn.com`
-certificate.
+Two servers, set up the same way:
 
-First install:
+| | host | site | nginx config | certificate |
+|---|---|---|---|---|
+| staging | nuke | https://skyroads.smittn.com/ | `nginx-skyroads.smittn.com.conf` | `*.smittn.com` |
+| production | server | https://skyroads.org/ (www redirects) | `nginx-skyroads.org.conf` | `skyroads.org`, `*.skyroads.org` |
+
+On each, the game is in `/web/skyroads` and the relay in `/web/skyroads-relay`,
+both owned by and running as `web`, each relay with its own `relay.key` and
+`stats.db`. The relay listens on the unix socket
+`/web/skyroads-relay/skyroads-relay.sock`, which nginx proxies at
+`/skyroads-relay`.
+
+First install (shown for production; on nuke use the smittn.com config):
 
 ```sh
 sudo install -d -o web -g web -m 755 /web/skyroads /web/skyroads-relay
 sudo install -o web -g web -m 644 relay.py /web/skyroads-relay/
 sudo install -m 644 skyroads-relay.service /etc/systemd/system/
+sudo -u web sh -c 'umask 077; openssl rand -hex 32 > /web/skyroads-relay/relay.key'
 sudo systemctl daemon-reload && sudo systemctl enable --now skyroads-relay
-sudo install -m 644 nginx-skyroads.conf /etc/nginx/sites-available/skyroads.smittn.com
-sudo ln -s ../sites-available/skyroads.smittn.com /etc/nginx/sites-enabled/
+sudo certbot certonly --dns-dnsmadeeasy \
+     --dns-dnsmadeeasy-credentials /root/dnsmadeeasy/dnsmadeeasy.ini \
+     -d skyroads.org -d '*.skyroads.org'
+sudo install -m 644 nginx-skyroads.org.conf /etc/nginx/sites-available/skyroads.org
+sudo ln -s ../sites-available/skyroads.org /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Updates: run `./deploy.sh` from the top of the repo. It reads the relay key
-from nuke over ssh (it only ever lives in the environment of `make`), builds
-`web/dist` for `wss://skyroads.smittn.com/skyroads-relay`, copies it to
+Updates: run `./deploy.sh` (staging) or `./deploy.sh production` from the top
+of the repo. It reads the relay key from the server over ssh (it only ever lives in the environment of `make`), builds
+`web/dist` for that site's `wss://…/skyroads-relay`, copies it to
 `/web/skyroads/` as `web`, and checks the live site serves the new
 `index.wasm`. If `relay.py` changed it also backs up `stats.db` to
 `stats.db.bak-DATE`, installs it and restarts `skyroads-relay` (live runs in

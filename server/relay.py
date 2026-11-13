@@ -236,7 +236,7 @@ def roster(road, now):
 # ---------------------------------------------------------------- passkeys
 # Pages allowed to use passkeys with this relay (--origin); the passkeys are
 # bound to the host name (the WebAuthn "relying party").
-ORIGINS = ["https://skyroads.smittn.com", "http://localhost:8000"]
+ORIGINS = ["https://skyroads.org", "https://skyroads.smittn.com", "http://localhost:8000"]
 CHALLENGE_TTL = 300                 # seconds to answer a passkey prompt
 
 

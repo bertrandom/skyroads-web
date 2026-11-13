@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # Build the web version and deploy it, with the ghost relay, to the server.
 #
-#   ./deploy.sh              build and deploy the game (and the relay if it changed)
-#   DEPLOY_HOST=other ./deploy.sh
+#   ./deploy.sh              staging: nuke, https://skyroads.smittn.com
+#   ./deploy.sh production   production: server, https://skyroads.org
 #
-# The server keeps the game in /web/skyroads and the relay in
+# Builds the game, deploys it (and the relay if relay.py changed) and checks
+# the live site. DEPLOY_HOST and DEPLOY_SITE override the target's host and
+# site. Each server keeps the game in /web/skyroads and the relay in
 # /web/skyroads-relay (see server/README.md), both owned by the `web` user.
 # The relay key (relay.key) is read from the server and handed to the build
 # in the environment only, so it never lands in a file or a command line.
 set -euo pipefail
 
-HOST=${DEPLOY_HOST:-nuke}
-SITE=${DEPLOY_SITE:-https://skyroads.smittn.com}
+case ${1:-staging} in
+    staging)    host=nuke;   site=https://skyroads.smittn.com ;;
+    production) host=server; site=https://skyroads.org ;;
+    *) echo "usage: $0 [staging|production]" >&2; exit 2 ;;
+esac
+HOST=${DEPLOY_HOST:-$host}
+SITE=${DEPLOY_SITE:-$site}
 RELAY_URL=${GHOST_RELAY:-wss://${SITE#https://}/skyroads-relay}
 GAME_DIR=/web/skyroads
 RELAY_DIR=/web/skyroads-relay
