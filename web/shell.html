@@ -19,8 +19,20 @@
           border: 1px solid #357; border-radius: 4px; padding: 4px 10px; }
   #status { left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 16px; }
   #sound { left: 10px; top: 10px; cursor: pointer; display: none; }
-  #fs { right: 10px; bottom: 10px; cursor: pointer; opacity: .5; }
-  #fs:hover { opacity: 1; }
+  #settings { position: absolute; right: 10px; bottom: 10px; display: flex;
+              flex-direction: column; align-items: flex-end; gap: 6px; }
+  #settings .chip { position: static; }
+  #gear { cursor: pointer; opacity: .5; font-size: 16px; line-height: 1; padding: 6px 8px;
+          display: flex; }
+  #gear svg { width: 18px; height: 18px; fill: currentColor; transition: transform .2s; }
+  #gear:hover, #settings.open #gear { opacity: 1; }
+  #settings.open #gear svg { transform: rotate(60deg); }
+  #menu { display: none; flex-direction: column; padding: 4px; min-width: 150px; }
+  #settings.open #menu { display: flex; }
+  #menu button { all: unset; cursor: pointer; padding: 6px 8px; border-radius: 3px;
+                 display: flex; justify-content: space-between; gap: 16px; }
+  #menu button:hover, #menu button:focus-visible { background: #234; }
+  #menu .state { opacity: .7; }
   #help { left: 10px; bottom: 10px; opacity: .6; font-size: 12px; transition: opacity 1s; }
 </style>
 </head>
@@ -29,7 +41,14 @@
 <div id="status" class="chip">Loading…</div>
 <div id="sound" class="chip" title="Browsers start audio only after you interact with the page">🔇 Click for sound</div>
 <div id="help" class="chip">Arrows: steer / speed · Space: jump · Enter: select · Esc: back</div>
-<button id="fs" class="chip" title="Full screen">⛶</button>
+<div id="settings">
+  <div id="menu" class="chip" role="menu">
+    <button id="fs" role="menuitemcheckbox">Full screen <span class="state"></span></button>
+    <button id="mute" role="menuitemcheckbox">Sound <span class="state"></span></button>
+  </div>
+  <button id="gear" class="chip" title="Settings" aria-label="Settings" aria-haspopup="menu"
+          aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7 7 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7 7 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.39 1.05.7 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7 7 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg></button>
+</div>
 <script>
   var statusEl = document.getElementById('status');
   var soundEl = document.getElementById('sound');
@@ -46,7 +65,8 @@
   }
   function updateSoundHint() {
     var ac = audioContext();
-    soundEl.style.display = (ac && ac.state !== 'running') ? 'block' : 'none';
+    soundEl.style.display = (ac && ac.state !== 'running' && !muted) ? 'block' : 'none';
+    applyMute();
   }
   ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
     window.addEventListener(ev, unlockAudio, true);
@@ -55,10 +75,77 @@
     // keep arrows / space from scrolling the page
     if ([32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
   }, true);
-  document.getElementById('fs').addEventListener('click', function () {
-    var el = document.documentElement;
-    (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+
+  // ---- settings menu: full screen + sound on/off ----
+  var settingsEl = document.getElementById('settings');
+  var gearEl = document.getElementById('gear');
+  var fsEl = document.getElementById('fs');
+  var muteEl = document.getElementById('mute');
+  var muted = false;
+  try { muted = localStorage.getItem('skyroads.muted') === '1'; } catch (e) {}
+
+  function setMenuOpen(open) {
+    settingsEl.classList.toggle('open', open);
+    gearEl.setAttribute('aria-expanded', open);
+    if (!open) canvas.focus();  // keep Space/Enter going to the game, not a button
+  }
+  gearEl.addEventListener('click', function (e) {
+    e.stopPropagation();
+    setMenuOpen(!settingsEl.classList.contains('open'));
   });
+  document.addEventListener('click', function (e) {
+    if (!settingsEl.contains(e.target)) setMenuOpen(false);
+  });
+
+  function isFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function updateFsItem() {
+    var on = isFullscreen();
+    fsEl.querySelector('.state').textContent = on ? 'On' : 'Off';
+    fsEl.setAttribute('aria-checked', on);
+  }
+  fsEl.addEventListener('click', function () {
+    if (isFullscreen()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      var el = document.documentElement;
+      (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+    }
+    setMenuOpen(false);
+  });
+  document.addEventListener('fullscreenchange', updateFsItem);
+  document.addEventListener('webkitfullscreenchange', updateFsItem);
+
+  // SDL feeds a ScriptProcessorNode wired to the destination. Muting routes it
+  // through a GainNode set to 0 (it must stay connected to keep being pulled,
+  // otherwise the queued OPL writes would pile up).
+  var gainNode = null;
+  function applyMute() {
+    var ac = audioContext();
+    var sp = Module.SDL2 && Module.SDL2.audio && Module.SDL2.audio.scriptProcessorNode;
+    if (ac && sp && !gainNode) {
+      gainNode = ac.createGain();
+      sp.disconnect();
+      sp.connect(gainNode);
+      gainNode.connect(ac.destination);
+    }
+    if (gainNode) gainNode.gain.value = muted ? 0 : 1;
+  }
+  function updateMuteItem() {
+    muteEl.querySelector('.state').textContent = muted ? 'Off' : 'On';
+    muteEl.setAttribute('aria-checked', !muted);
+  }
+  muteEl.addEventListener('click', function () {
+    muted = !muted;
+    try { localStorage.setItem('skyroads.muted', muted ? '1' : '0'); } catch (e) {}
+    applyMute();
+    updateMuteItem();
+    updateSoundHint();
+    setMenuOpen(false);
+  });
+  updateFsItem();
+  updateMuteItem();
 
   var Module = {
     canvas: canvas,
