@@ -378,7 +378,8 @@
   var NAME_RULES = '3\u201320 letters, numbers or dashes; starts and ends with a letter or number, ' +
                    'no double dashes. Empty: a random name.';
   function updateNameItem() {
-    var available = typeof Module.skyGhostName === 'function';
+    var available = typeof Module.skyGhostName === 'function' &&
+                    Module.skyGhostMultiplayer();   // names are for multiplayer
     nameItemEl.hidden = !available || !nameFormEl.hidden;
     if (!available) return;
     var n = Module.skyGhostName();
