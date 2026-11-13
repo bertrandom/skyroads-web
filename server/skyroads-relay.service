@@ -1,0 +1,21 @@
+[Unit]
+Description=SkyRoads live ghost relay (WebSocket)
+After=network.target
+
+[Service]
+User=web
+WorkingDirectory=/web/skyroads-relay
+ExecStart=/usr/bin/python3 /web/skyroads-relay/relay.py --unix /web/skyroads-relay/skyroads-relay.sock
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/web/skyroads-relay
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

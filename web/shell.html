@@ -32,6 +32,18 @@
                  display: flex; justify-content: space-between; gap: 16px; }
   #menu button:hover, #menu button:focus-visible { background: #234; }
   #menu .state { opacity: .7; }
+  #screen { position: relative; }
+  /* players on this road (live ghosts), over the top left of the game */
+  #players { position: absolute; left: 1.5%; top: 2%; margin: 0; padding: .35em .6em;
+             list-style: none; display: none; pointer-events: none;
+             background: rgba(5, 10, 20, .55); border-radius: 4px;
+             font: 600 clamp(9px, calc(min(100vw, 133.33vh) * .018), 16px)/1.45 ui-monospace, Menlo, Consolas, monospace;
+             color: #dde; text-shadow: 0 1px 2px #000; }
+  #players.show { display: block; }
+  #players li { display: flex; align-items: center; gap: .5em; white-space: nowrap; }
+  #players .dot { width: .75em; height: .75em; border-radius: 50%; flex: none;
+                  box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
+  #players .you { opacity: .75; }
   #help { margin: 4px 0 0; padding: 6px 8px 4px; border-top: 1px solid #357;
           display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 12px; }
   #help dt { opacity: .7; }
@@ -39,7 +51,10 @@
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<div id="wrap"><div id="screen">
+  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <ul id="players" aria-label="Players on this road"></ul>
+</div></div>
 <div id="status" class="chip">Loading…</div>
 <div id="settings">
   <div id="menu" class="chip" role="menu">
@@ -180,6 +195,8 @@
     statusEl.textContent = 'Error: ' + msg;
   };
 </script>
+<script src="relay.js"></script>
+<script src="live-ghosts.js"></script>
 {{{ SCRIPT }}}
 </body>
 </html>
