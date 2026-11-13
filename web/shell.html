@@ -18,7 +18,6 @@
   .chip { position: absolute; background: rgba(10, 20, 35, .85); color: #9cf;
           border: 1px solid #357; border-radius: 4px; padding: 4px 10px; }
   #status { left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 16px; }
-  #sound { left: 10px; top: 10px; cursor: pointer; display: none; }
   #settings { position: absolute; right: 10px; bottom: 10px; display: flex;
               flex-direction: column; align-items: flex-end; gap: 6px; }
   #settings .chip { position: static; }
@@ -33,40 +32,42 @@
                  display: flex; justify-content: space-between; gap: 16px; }
   #menu button:hover, #menu button:focus-visible { background: #234; }
   #menu .state { opacity: .7; }
-  #help { left: 10px; bottom: 10px; opacity: .6; font-size: 12px; transition: opacity 1s; }
+  #help { margin: 4px 0 0; padding: 6px 8px 4px; border-top: 1px solid #357;
+          display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 12px; }
+  #help dt { opacity: .7; }
+  #help dd { margin: 0; }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
 <div id="status" class="chip">Loading…</div>
-<div id="sound" class="chip" title="Browsers start audio only after you interact with the page">🔇 Click for sound</div>
-<div id="help" class="chip">Arrows: steer / speed · Space: jump · Enter: select · Esc: back</div>
 <div id="settings">
   <div id="menu" class="chip" role="menu">
     <button id="fs" role="menuitemcheckbox">Full screen <span class="state"></span></button>
     <button id="mute" role="menuitemcheckbox">Sound <span class="state"></span></button>
+    <dl id="help">
+      <dt>←&nbsp;→</dt><dd>Steer</dd>
+      <dt>↑&nbsp;↓</dt><dd>Speed</dd>
+      <dt>Space</dt><dd>Jump</dd>
+      <dt>Enter</dt><dd>Select</dd>
+      <dt>Esc</dt><dd>Back</dd>
+    </dl>
   </div>
   <button id="gear" class="chip" title="Settings" aria-label="Settings" aria-haspopup="menu"
           aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7 7 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7 7 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.39 1.05.7 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7 7 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg></button>
 </div>
 <script>
   var statusEl = document.getElementById('status');
-  var soundEl = document.getElementById('sound');
   var canvas = document.getElementById('canvas');
 
   function audioContext() { return Module.SDL2 && Module.SDL2.audioContext; }
 
   // SDL resumes audio by itself once the page has seen a user gesture; this
-  // just does it immediately and keeps the hint in sync.
+  // just does it immediately.
   function unlockAudio() {
     var ac = audioContext();
     if (ac && ac.state !== 'running') ac.resume();
     canvas.focus();
-  }
-  function updateSoundHint() {
-    var ac = audioContext();
-    soundEl.style.display = (ac && ac.state !== 'running' && !muted) ? 'block' : 'none';
-    applyMute();
   }
   ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
     window.addEventListener(ev, unlockAudio, true);
@@ -141,7 +142,6 @@
     try { localStorage.setItem('skyroads.muted', muted ? '1' : '0'); } catch (e) {}
     applyMute();
     updateMuteItem();
-    updateSoundHint();
     setMenuOpen(false);
   });
   updateFsItem();
@@ -163,16 +163,15 @@
     onGameStarted: function () {
       statusEl.style.display = 'none';
       canvas.focus();
-      updateSoundHint();
-      setInterval(updateSoundHint, 500);
-      setTimeout(function () { document.getElementById('help').style.opacity = 0; }, 15000);
+      // SDL creates its audio node lazily; apply the saved mute once it exists
+      applyMute();
+      setInterval(applyMute, 500);
     },
     onGameExit: function () {
       statusEl.style.display = 'block';
       statusEl.style.cursor = 'pointer';
       statusEl.textContent = 'Thanks for playing! Click to play again.';
       statusEl.onclick = function () { location.reload(); };
-      soundEl.style.display = 'none';
     }
   };
   if (!window.crossOriginIsolated) statusEl.textContent = 'Enabling threads…';
