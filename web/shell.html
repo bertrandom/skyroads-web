@@ -2,9 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SkyRoads</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SkyRoads">
 <!-- Re-serves the page with COOP/COEP headers on hosts that cannot set them
      (needed for SharedArrayBuffer / WebAssembly threads). -->
 <script src="coi-serviceworker.js"></script>
@@ -167,13 +175,70 @@
           display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 12px; }
   #help dt { opacity: .7; }
   #help dd { margin: 0; }
+  /* touch controls (phones and tablets; ?touch=1 / ?touch=0 forces them on / off):
+     below the game in portrait, either side of it in landscape */
+  .pad { display: none; }
+  html.touch { touch-action: manipulation; }
+  html.touch body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  html.touch #wrap { display: grid; --dpad: clamp(120px, 42vmin, 200px);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  html.touch .pad { display: flex; align-items: center; justify-content: center; gap: 18px; touch-action: none; }
+  html.touch #help { display: none; }
+  html.touch #settings { top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right));
+                         bottom: auto; flex-direction: column-reverse; }
+  @media (orientation: landscape) {
+    html.touch #wrap { grid-template-columns: 1fr auto 1fr; align-items: center; }
+    html.touch canvas { width: min(calc(100dvh * 4 / 3), calc(100vw - 2 * var(--dpad) - 48px)); }
+    html.touch #pad-act { flex-direction: column-reverse; }
+  }
+  @media (orientation: portrait) {
+    html.touch #wrap { grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; align-items: stretch; }
+    html.touch #screen { grid-column: 1 / -1; grid-row: 1; }
+    html.touch #pad-dir { grid-column: 1; grid-row: 2; }
+    html.touch #pad-act { grid-column: 2; grid-row: 2; flex-direction: column-reverse; }
+    html.touch canvas { width: 100%; }
+  }
+  .dpad { position: relative; width: var(--dpad); height: var(--dpad); border-radius: 50%;
+          background: rgba(20, 40, 70, .55); border: 1px solid #357; }
+  .dpad span { position: absolute; width: 34%; height: 34%; display: flex; align-items: center;
+               justify-content: center; border-radius: 30%; color: #9cf; opacity: .75; }
+  .dpad svg { width: 55%; height: 55%; fill: currentColor; }
+  .dpad .u { left: 33%; top: 3%; }
+  .dpad .d { left: 33%; bottom: 3%; } .dpad .d svg { transform: rotate(180deg); }
+  .dpad .l { top: 33%; left: 3%; }    .dpad .l svg { transform: rotate(-90deg); }
+  .dpad .r { top: 33%; right: 3%; }   .dpad .r svg { transform: rotate(90deg); }
+  .dpad span.on { background: rgba(120, 190, 255, .35); opacity: 1; }
+  .pad button { all: unset; display: flex; align-items: center; justify-content: center; color: #9cf;
+                background: rgba(20, 40, 70, .55); border: 1px solid #357;
+                font: 600 12px system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+  .pad button.on { background: rgba(120, 190, 255, .35); color: #fff; }
+  #pad-act .jump { width: calc(var(--dpad) * .6); height: calc(var(--dpad) * .6); border-radius: 50%; font-size: 15px; }
+  #pad-act .keys { display: flex; gap: 10px; }
+  #pad-act .keys button { padding: 9px 14px; border-radius: 18px; }
 </style>
 </head>
 <body>
-<div id="wrap"><div id="screen">
+<div id="wrap">
+<div id="pad-dir" class="pad" aria-hidden="true">
+  <div class="dpad">
+    <span class="u"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></span>
+    <span class="d"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></span>
+    <span class="l"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></span>
+    <span class="r"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></span>
+  </div>
+</div>
+<div id="screen">
   <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
   <ul id="players" aria-label="Players on this road"></ul>
-</div></div>
+</div>
+<div id="pad-act" class="pad" aria-hidden="true">
+  <div class="keys">
+    <button data-key="6" tabindex="-1">Esc</button>
+    <button data-key="5" tabindex="-1">Enter</button>
+  </div>
+  <button class="jump" data-key="4" tabindex="-1">Jump</button>
+</div>
+</div>
 <div id="status" class="chip">Loading…</div>
 <dialog id="about" aria-labelledby="about-title">
   <header><h2 id="about-title">About</h2>
@@ -266,6 +331,89 @@
     // keep arrows / space from scrolling the page
     if (!typing(e) && [32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
   }, true);
+
+  // ---- touch controls: the on-screen pad presses the game's keys ----
+  var touchUI = (function () {
+    var force = new URLSearchParams(location.search).get('touch');
+    return force !== null ? force !== '0'
+                          : matchMedia('(hover: none) and (pointer: coarse)').matches;
+  })();
+  if (touchUI) (function () {
+    document.documentElement.classList.add('touch');
+    var held = {};                       // key -> { source: 1 } (a key is down while any source holds it)
+    function hold(key, src, on) {
+      var s = held[key] || (held[key] = {});
+      var was = Object.keys(s).length > 0;
+      if (on) s[src] = 1; else delete s[src];
+      var now = Object.keys(s).length > 0;
+      if (was !== now && typeof Module._sky_touch_key === 'function') Module._sky_touch_key(key, now ? 1 : 0);
+    }
+    document.querySelectorAll('.pad').forEach(function (el) {
+      el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    });
+
+    // buttons: Jump (space), Enter, Esc; several fingers may hold one button
+    document.querySelectorAll('.pad button[data-key]').forEach(function (b) {
+      var key = +b.dataset.key, fingers = {};
+      b.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        try { b.setPointerCapture(e.pointerId); } catch (err) {}
+        fingers[e.pointerId] = 1;
+        b.classList.add('on');
+        hold(key, 'b' + e.pointerId, true);
+      });
+      function lift(e) {
+        if (!(e.pointerId in fingers)) return;
+        delete fingers[e.pointerId];
+        if (!Object.keys(fingers).length) b.classList.remove('on');
+        hold(key, 'b' + e.pointerId, false);
+      }
+      ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (ev) { b.addEventListener(ev, lift); });
+    });
+
+    // d-pad: one finger, read by angle from the centre; the 30-degree wedges
+    // between two arrows press both (accelerate and steer at once)
+    var dpad = document.querySelector('.dpad');
+    var dirs = { u: 0, d: 1, l: 2, r: 3 }, cur = {}, finger = null;
+    function aim(e) {
+      var want = {};
+      if (e) {
+        var r = dpad.getBoundingClientRect();
+        var x = (e.clientX - r.left) / r.width * 2 - 1, y = (e.clientY - r.top) / r.height * 2 - 1;
+        var len = Math.sqrt(x * x + y * y);
+        if (len > 0.2) {
+          x /= len; y /= len;
+          if (x > 0.5) want.r = 1; else if (x < -0.5) want.l = 1;
+          if (y > 0.5) want.d = 1; else if (y < -0.5) want.u = 1;
+        }
+      }
+      for (var k in dirs) {
+        if (!!want[k] === !!cur[k]) continue;
+        hold(dirs[k], 'dpad', !!want[k]);
+        dpad.querySelector('.' + k).classList.toggle('on', !!want[k]);
+      }
+      cur = want;
+    }
+    dpad.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      if (finger !== null) return;
+      finger = e.pointerId;
+      try { dpad.setPointerCapture(e.pointerId); } catch (err) {}
+      aim(e);
+    });
+    dpad.addEventListener('pointermove', function (e) { if (e.pointerId === finger) aim(e); });
+    function release(e) { if (e.pointerId === finger) { finger = null; aim(null); } }
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (ev) { dpad.addEventListener(ev, release); });
+
+    // let go of everything when the page is hidden
+    function releaseAll() {
+      finger = null; aim(null);
+      for (var key in held) for (var src in held[key]) hold(+key, src, false);
+      document.querySelectorAll('.pad .on').forEach(function (el) { el.classList.remove('on'); });
+    }
+    window.addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
+  })();
 
   // ---- settings menu (full screen and sound are the icons beside the gear) ----
   var settingsEl = document.getElementById('settings');
@@ -376,6 +524,7 @@
   var playersEl = document.getElementById('players');
   function placePlayers() {
     if (!playersEl.classList.contains('show')) return;
+    if (touchUI) { playersEl.classList.remove('outside'); return; }   // the pads are beside the game
     playersEl.classList.add('outside');           // measure it in that style
     if (canvas.getBoundingClientRect().left < playersEl.offsetWidth + 24)
       playersEl.classList.remove('outside');
