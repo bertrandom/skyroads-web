@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkyRoads</title>
+<link rel="icon" href="data:,">
+<!-- Re-serves the page with COOP/COEP headers on hosts that cannot set them
+     (needed for SharedArrayBuffer / WebAssembly threads). -->
+<script src="coi-serviceworker.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #9cf;
+               font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #wrap { position: absolute; inset: 0; display: flex; align-items: center;
+          justify-content: center; }
+  canvas { display: block; outline: none; image-rendering: pixelated;
+           width: min(100vw, calc(100vh * 4 / 3)); height: auto; aspect-ratio: 4 / 3; }
+  #overlay { position: absolute; inset: 0; display: flex; flex-direction: column;
+             align-items: center; justify-content: center; gap: 12px;
+             background: rgba(0, 0, 0, .78); cursor: pointer; text-align: center; }
+  #overlay h1 { margin: 0; font-size: 42px; letter-spacing: 2px; color: #f44;
+                text-shadow: 0 0 12px #f80; }
+  #overlay .hint { color: #8ab; max-width: 34em; }
+  #status { color: #fc6; }
+  #fs { position: absolute; right: 10px; bottom: 10px; background: #123; color: #9cf;
+        border: 1px solid #357; border-radius: 4px; padding: 4px 10px; cursor: pointer;
+        opacity: .5; }
+  #fs:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<div id="overlay">
+  <h1>SkyRoads</h1>
+  <div id="status">Loading…</div>
+  <div class="hint">Arrows: steer, accelerate, brake · Space: jump · Enter: select · Esc: back<br>
+    A game controller works too.</div>
+</div>
+<button id="fs" title="Full screen">⛶</button>
+<script>
+  var overlay = document.getElementById('overlay');
+  var statusEl = document.getElementById('status');
+  var canvas = document.getElementById('canvas');
+  var ready = false;
+
+  function start() {
+    if (!ready) return;
+    overlay.style.display = 'none';
+    canvas.focus();
+    // SDL resumes audio itself after user activation; do it now as well
+    if (Module.SDL2 && Module.SDL2.audioContext) Module.SDL2.audioContext.resume();
+  }
+  overlay.addEventListener('click', start);
+  window.addEventListener('keydown', function (e) {
+    if (overlay.style.display !== 'none' && ready) { start(); }
+    // keep arrows / space from scrolling the page
+    if ([32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
+  }, true);
+  document.getElementById('fs').addEventListener('click', function () {
+    var el = document.documentElement;
+    (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+    canvas.focus();
+  });
+
+  var Module = {
+    canvas: canvas,
+    // debug hooks: ?SKY_AUTOKEYS=0d,0d&SKY_WARP=12 etc. become environment variables
+    preRun: [function () {
+      new URLSearchParams(location.search).forEach(function (v, k) {
+        if (k.indexOf('SKY_') === 0) Module.ENV[k] = v;
+      });
+    }],
+    print: function (t) { console.log(t); },
+    printErr: function (t) { console.warn(t); },
+    setStatus: function (t) {
+      if (!ready) statusEl.textContent = t ? t.replace(/\(.*\)/, '') : 'Loading…';
+    },
+    onGameStarted: function () {
+      ready = true;
+      statusEl.textContent = 'Click or press a key to start';
+    },
+    onGameExit: function () {
+      overlay.style.display = 'flex';
+      overlay.style.cursor = 'pointer';
+      statusEl.textContent = 'Thanks for playing! Click to play again.';
+      overlay.onclick = function () { location.reload(); };
+    }
+  };
+  if (!window.crossOriginIsolated) {
+    statusEl.textContent = 'Enabling threads…';
+  }
+  window.onerror = function (msg) {
+    statusEl.textContent = 'Error: ' + msg;
+    overlay.style.display = 'flex';
+  };
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
