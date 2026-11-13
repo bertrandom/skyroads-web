@@ -89,22 +89,18 @@ sudo ln -s ../sites-available/skyroads.smittn.com /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Game updates (build on your machine with the relay URL, then copy `dist/`):
-
-```sh
-cd ../web
-make GHOST_RELAY=wss://skyroads.smittn.com/skyroads-relay \
-     GHOST_KEY=$(ssh nuke sudo cat /web/skyroads-relay/relay.key)
-rsync -a --delete dist/ nuke:/tmp/skyroads-game/
-ssh nuke 'sudo rsync -a --delete --chown=web:web /tmp/skyroads-game/ /web/skyroads/'
-```
-
-Relay updates: copy `relay.py` to `/web/skyroads-relay/` and
-`sudo systemctl restart skyroads-relay` (live runs in memory are lost).
+Updates: run `./deploy.sh` from the top of the repo. It reads the relay key
+from nuke over ssh (it only ever lives in the environment of `make`), builds
+`web/dist` for `wss://skyroads.smittn.com/skyroads-relay`, copies it to
+`/web/skyroads/` as `web`, and checks the live site serves the new
+`index.wasm`. If `relay.py` changed it also backs up `stats.db` to
+`stats.db.bak-DATE`, installs it and restarts `skyroads-relay` (live runs in
+memory are lost); otherwise the relay is left running. `DEPLOY_HOST`,
+`DEPLOY_SITE` and `GHOST_RELAY` override the host, site and relay URL.
 
 `GHOST_RELAY` is written to `dist/relay.js`. A relay can also be tried
 without rebuilding with `?relay=wss://…` on the page URL. Without a relay URL
-the game falls back to replaying your own saved runs.
+the web game shows no ghosts.
 
 ## Local test
 
