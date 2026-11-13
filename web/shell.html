@@ -103,6 +103,27 @@
                border: 1px solid #357; font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
   #stats td.by { text-align: left; max-width: 10em; overflow: hidden; text-overflow: ellipsis; }
   #stats .note { margin: 0; opacity: .8; }
+  /* about (text from about.md, built into about.html) */
+  #about { width: min(560px, calc(100vw - 32px)); max-height: 85vh; padding: 0; overflow: hidden;
+           background: #0b1524; color: #cde; border: 1px solid #357; border-radius: 6px;
+           font: 14px/1.55 system-ui, sans-serif; }
+  #about[open] { display: flex; flex-direction: column; }
+  #about::backdrop { background: rgba(0, 0, 0, .6); }
+  #about header { display: flex; align-items: center; justify-content: space-between;
+                  padding: 10px 14px; border-bottom: 1px solid #357; flex: none; }
+  #about header h2 { margin: 0; font-size: 16px; color: #9cf; }
+  #about .close { all: unset; cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 6px; border-radius: 3px; }
+  #about .close:hover, #about .close:focus-visible { background: #234; }
+  #about .body { padding: 4px 18px 16px; overflow: auto; }
+  #about .body h1 { font-size: 20px; margin: 14px 0 6px; color: #9cf; }
+  #about .body h2 { font-size: 15px; margin: 16px 0 4px; color: #9cf; }
+  #about .body h3 { font-size: 14px; margin: 14px 0 4px; color: #9cf; }
+  #about .body p, #about .body ul, #about .body ol { margin: 6px 0; }
+  #about .body ul, #about .body ol { padding-left: 22px; }
+  #about .body a { color: #6cf; }
+  #about .body code { font: 12px ui-monospace, Menlo, Consolas, monospace; background: #1c2d44;
+                      padding: 1px 4px; border-radius: 3px; }
+  #about .body hr { border: 0; border-top: 1px solid #2a3f5c; margin: 14px 0; }
   /* account (passkeys) */
   #account { width: min(400px, calc(100vw - 32px)); padding: 0; background: #0b1524; color: #cde;
              border: 1px solid #357; border-radius: 6px; font: 14px/1.45 system-ui, sans-serif; }
@@ -153,6 +174,11 @@
   <ul id="players" aria-label="Players on this road"></ul>
 </div></div>
 <div id="status" class="chip">Loading…</div>
+<dialog id="about" aria-labelledby="about-title">
+  <header><h2 id="about-title">About</h2>
+    <button class="close" aria-label="Close">&times;</button></header>
+  <div class="body"></div>
+</dialog>
 <dialog id="account" aria-labelledby="account-title">
   <header><h2 id="account-title">Account</h2>
     <button class="close" aria-label="Close">&times;</button></header>
@@ -184,6 +210,7 @@
     <button id="name-item" role="menuitem" hidden>Name <span class="state"></span></button>
     <button id="stats-item" role="menuitem" hidden>Statistics</button>
     <button id="account-item" role="menuitem" hidden>Account <span class="state"></span></button>
+    <button id="about-item" role="menuitem">About</button>
     <form id="name-form" hidden autocomplete="off">
       <div class="row">
         <input id="name-input" maxlength="20" spellcheck="false" autocapitalize="off"
@@ -458,6 +485,33 @@
   statsBodyEl.addEventListener('mouseout', function (e) { if (tipCell(e)) hideTip(); });
   statsBodyEl.addEventListener('click', function (e) { var td = tipCell(e); if (td) showTip(td); else hideTip(); });
   statsBodyEl.addEventListener('scroll', hideTip);
+
+  // About: the text of about.md (built into about.html by the Makefile)
+  var aboutEl = document.getElementById('about');
+  var aboutBodyEl = aboutEl.querySelector('.body');
+  var aboutLoaded = false;
+  document.getElementById('about-item').addEventListener('click', function () {
+    setMenuOpen(false);
+    if (!aboutLoaded) {
+      aboutBodyEl.innerHTML = '<p>Loading\u2026</p>';
+      fetch('about.html').then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.text();
+      }).then(function (text) {
+        aboutBodyEl.innerHTML = text;   // generated from about.md, escaped by gen_about.py
+        aboutLoaded = true;
+      }, function () {
+        aboutBodyEl.innerHTML = '<p>Could not load the About text.</p>';
+      });
+    }
+    aboutEl.showModal();
+    aboutEl.querySelector('.close').focus();
+  });
+  aboutEl.querySelector('.close').addEventListener('click', function () { aboutEl.close(); });
+  aboutEl.addEventListener('click', function (e) { if (e.target === aboutEl) aboutEl.close(); });
+  aboutEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
+  aboutEl.addEventListener('keyup', function (e) { e.stopPropagation(); });
+  aboutEl.addEventListener('close', function () { canvas.focus(); });
 
   // Account: create one with a passkey, sign in with it elsewhere; while
   // signed in your name, settings, road completions and statistics follow

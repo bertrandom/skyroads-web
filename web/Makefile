@@ -37,7 +37,7 @@ LDFLAGS := -O2 -pthread -sUSE_SDL=2 \
            --preload-file $(BUILD)/data@/data \
            --shell-file shell.html
 
-all: $(OUT)/index.html $(OUT)/live-ghosts.js $(OUT)/relay.js
+all: $(OUT)/index.html $(OUT)/live-ghosts.js $(OUT)/relay.js $(OUT)/about.html
 
 # generated sources come from the native port's pipeline
 $(PORT)/game.c $(PORT)/protos.h $(PORT)/image_data.h:
@@ -63,6 +63,11 @@ $(OUT)/index.html: $(OBJS) $(BUILD)/data shell.html
 	mkdir -p $(OUT)
 	$(EMCC) $(OBJS) $(LDFLAGS) -o $@
 	cp coi-serviceworker.js $(OUT)/ 2>/dev/null || true
+
+# the About dialog's text, written in about.md
+$(OUT)/about.html: about.md gen_about.py
+	mkdir -p $(OUT)
+	python3 gen_about.py about.md $@
 
 $(OUT)/live-ghosts.js: live-ghosts.js
 	mkdir -p $(OUT)
