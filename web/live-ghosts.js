@@ -9,13 +9,20 @@
  * A random anonymous player id is kept in localStorage so the relay does not
  * show you your own runs after a reload or reconnect; the relay also turns it
  * into your two-word name.  The players on your road are listed over the top
- * left of the game, each with the colour of their ghost. */
+ * left of the game, each with the colour of their ghost.
+ *
+ * Multiplayer can be switched off in the settings menu (remembered in
+ * localStorage, on by default): single player has no connection and no
+ * ghosts.  Switching takes effect at once, also mid-run: the run is followed
+ * in single player too and sent to the relay when multiplayer comes back. */
 (function () {
   var url = new URLSearchParams(location.search).get('relay') || window.SKY_GHOST_RELAY;
   if (!url || typeof Module === 'undefined') return;
 
   var player = playerId();
-  var ws = null, backoff = 1000;
+  var multiplayer = true;
+  try { multiplayer = localStorage.getItem('skyroads.multiplayer') !== '0'; } catch (e) {}
+  var ws = null, backoff = 1000, retryTimer = null;
   var sub = 0, road = -1, racing = false, runStart = 0;
   var live = {};            // relay run ids announced for the current run
   var pending = [];         // frames not sent yet: t, x, y, spr, z, ...
@@ -43,7 +50,13 @@
       li.appendChild(document.createTextNode(String(p.name) + (p.you ? ' (you)' : '')));
       listEl.appendChild(li);
     });
-    listEl.classList.toggle('show', !!(list && list.length));
+    shownList = list && list.length ? list : null;
+    updateListVisibility();
+  }
+  /* only while racing: not on the road selection screen or other menus */
+  var shownList = null, hideTimer = null;
+  function updateListVisibility() {
+    if (listEl) listEl.classList.toggle('show', !!(shownList && racing));
   }
 
   function playerId() {
@@ -59,19 +72,26 @@
   }
 
   function connect() {
+    if (!multiplayer || ws) return;
     try { ws = new WebSocket(url); } catch (e) { retry(); return; }
     ws.binaryType = 'arraybuffer';
     ws.onopen = function () {
       backoff = 1000;
       if (racing) sendStart();          // reconnected mid-run: resend it
     };
-    ws.onclose = function () { ws = null; showPlayers([]); retry(); };
+    ws.onclose = function () { ws = null; showPlayers([]); if (multiplayer) retry(); };
     ws.onerror = function () {};
     ws.onmessage = receive;
   }
   function retry() {
-    setTimeout(connect, backoff);
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 30000);
+  }
+  function disconnect() {
+    clearTimeout(retryTimer);
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    showPlayers([]);
   }
   function open() { return ws && ws.readyState === 1; }
 
@@ -131,18 +151,43 @@
     Module._free(p);
   }
 
+  /* settings menu (shell.html) */
+  Module.skyGhostMultiplayer = function () { return multiplayer; };
+  Module.skyGhostSetMultiplayer = function (on) {
+    multiplayer = !!on;
+    try { localStorage.setItem('skyroads.multiplayer', multiplayer ? '1' : '0'); } catch (e) {}
+    Module._ghost_set_multiplayer(multiplayer ? 1 : 0);
+    if (multiplayer) {
+      backoff = 1000;
+      connect();          // mid-run: resends the run so far once connected
+    } else {
+      disconnect();
+      live = {};
+      Module._ghost_remote_clear();   // drop the other players' ghosts now
+    }
+  };
+
   /* called by port/ghost.c (proxied to the main thread) */
+  Module.skyGhostLive = function () { return multiplayer; };
   Module.skyGhostStart = function (r) {
+    clearTimeout(hideTimer);
     sub++; road = r; racing = true; runStart = Date.now();
+    updateListVisibility();
     pending = []; sent = [];
     if (open()) sendStart();
   };
+  /* the run is followed in single player too, so that switching multiplayer
+   * on mid-run can send it to the relay */
   Module.skyGhostFrame = function (t, x, y, spr, z) {
     if (racing) pending.push(t, x, y, spr, z);
   };
   Module.skyGhostEnd = function () {
     flush();
     racing = false; sent = [];
+    // after a crash the game restarts the road right away (~1 ms): keep the
+    // list up over that gap, hide it when the player goes back to the menus
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(updateListVisibility, 500);
     if (open()) ws.send('{"t":"end"}');
   };
 

@@ -32,6 +32,7 @@
                  display: flex; justify-content: space-between; gap: 16px; }
   #menu button:hover, #menu button:focus-visible { background: #234; }
   #menu .state { opacity: .7; }
+  #menu button[hidden] { display: none; }
   #screen { position: relative; }
   /* players on this road (live ghosts), over the top left of the game */
   #players { position: absolute; left: 1.5%; top: 2%; margin: 0; padding: .35em .6em;
@@ -60,6 +61,7 @@
   <div id="menu" class="chip" role="menu">
     <button id="fs" role="menuitemcheckbox">Full screen <span class="state"></span></button>
     <button id="mute" role="menuitemcheckbox">Sound <span class="state"></span></button>
+    <button id="multi" role="menuitemcheckbox" hidden>Multiplayer <span class="state"></span></button>
     <dl id="help">
       <dt>←&nbsp;→</dt><dd>Steer</dd>
       <dt>↑&nbsp;↓</dt><dd>Speed</dd>
@@ -92,7 +94,7 @@
     if ([32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
   }, true);
 
-  // ---- settings menu: full screen + sound on/off ----
+  // ---- settings menu: full screen, sound, multiplayer ----
   var settingsEl = document.getElementById('settings');
   var gearEl = document.getElementById('gear');
   var fsEl = document.getElementById('fs');
@@ -107,6 +109,7 @@
   }
   gearEl.addEventListener('click', function (e) {
     e.stopPropagation();
+    updateMultiItem();
     setMenuOpen(!settingsEl.classList.contains('open'));
   });
   document.addEventListener('click', function (e) {
@@ -161,6 +164,24 @@
   });
   updateFsItem();
   updateMuteItem();
+
+  // Multiplayer (live ghosts of other players, see live-ghosts.js) or single
+  // player (no connection, no ghosts).  Only offered when a relay is
+  // configured.
+  var multiEl = document.getElementById('multi');
+  function updateMultiItem() {
+    var available = typeof Module.skyGhostMultiplayer === 'function';
+    multiEl.hidden = !available;
+    if (!available) return;
+    var on = Module.skyGhostMultiplayer();
+    multiEl.querySelector('.state').textContent = on ? 'On' : 'Off';
+    multiEl.setAttribute('aria-checked', on);
+  }
+  multiEl.addEventListener('click', function () {
+    Module.skyGhostSetMultiplayer(!Module.skyGhostMultiplayer());
+    updateMultiItem();
+    setMenuOpen(false);
+  });
 
   var Module = {
     canvas: canvas,
