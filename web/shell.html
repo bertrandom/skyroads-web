@@ -103,6 +103,25 @@
                border: 1px solid #357; font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
   #stats td.by { text-align: left; max-width: 10em; overflow: hidden; text-overflow: ellipsis; }
   #stats .note { margin: 0; opacity: .8; }
+  /* congratulations on a new record / personal best */
+  #congrats { --accent: #6cf; width: min(360px, calc(100vw - 32px)); padding: 22px 22px 18px;
+              background: #0b1524; color: #cde; border: 2px solid var(--accent); border-radius: 8px;
+              text-align: center; font: 14px/1.4 system-ui, sans-serif;
+              box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 35%, transparent); }
+  #congrats.overall { --accent: #f5c542; }
+  #congrats::backdrop { background: rgba(0, 0, 0, .55); }
+  #congrats .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px;
+                     font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+                     color: #0b1524; background: var(--accent); }
+  #congrats h2 { margin: 12px 0 2px; font-size: 22px; color: var(--accent); }
+  #congrats .kind { margin: 0 0 12px; font-size: 15px; color: #dde; }
+  #congrats .road { margin: 0; opacity: .8; }
+  #congrats .time { margin: 2px 0 10px; font: 700 34px/1.2 ui-monospace, Menlo, Consolas, monospace;
+                    color: #fff; font-variant-numeric: tabular-nums; }
+  #congrats .prev { margin: 0; font-size: 12px; opacity: .75; }
+  #congrats-ok { all: unset; cursor: pointer; margin-top: 16px; padding: 6px 22px; border-radius: 4px;
+                 font-weight: 600; color: #0b1524; background: var(--accent); }
+  #congrats-ok:hover, #congrats-ok:focus-visible { filter: brightness(1.15); outline: 2px solid #fff; outline-offset: 2px; }
   #help { margin: 4px 0 0; padding: 6px 8px 4px; border-top: 1px solid #357;
           display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 12px; }
   #help dt { opacity: .7; }
@@ -115,6 +134,15 @@
   <ul id="players" aria-label="Players on this road"></ul>
 </div></div>
 <div id="status" class="chip">Loading…</div>
+<dialog id="congrats" aria-labelledby="congrats-title">
+  <span class="badge"></span>
+  <h2 id="congrats-title">Congratulations!</h2>
+  <p class="kind"></p>
+  <p class="road"></p>
+  <p class="time"></p>
+  <p class="prev"></p>
+  <button id="congrats-ok">OK</button>
+</dialog>
 <dialog id="stats" aria-labelledby="stats-title">
   <header><h2 id="stats-title">Statistics</h2>
     <button id="stats-close" aria-label="Close">&times;</button></header>
@@ -416,6 +444,42 @@
   statsBodyEl.addEventListener('mouseout', function (e) { if (tipCell(e)) hideTip(); });
   statsBodyEl.addEventListener('click', function (e) { var td = tipCell(e); if (td) showTip(td); else hideTip(); });
   statsBodyEl.addEventListener('scroll', hideTip);
+
+  // Congratulations when a finish sets the road's all-time record or your
+  // personal best (the relay sends {t: 'record', ...}, see live-ghosts.js).
+  var congratsEl = document.getElementById('congrats');
+  function congratsText(sel, text) { congratsEl.querySelector(sel).textContent = text; }
+  window.skyRecord = function (m) {
+    var road = (m.road | 0), overall = !!m.overall, prev = '';
+    var me = typeof Module.skyGhostName === 'function' ? Module.skyGhostName() : null;
+    congratsEl.classList.toggle('overall', overall);
+    congratsText('.badge', overall ? 'All-time record' : 'Personal best');
+    congratsText('.kind', overall && m.personal ? 'A new all-time record, and your personal best!'
+                          : overall ? 'You set a new all-time record!' : 'You beat your personal best!');
+    congratsText('.road', WORLDS[road / 3 | 0] + ' \u00b7 Road ' + (road % 3 + 1));
+    congratsText('.time', laptime(m.seconds));
+    if (overall) {
+      var po = m.previous_overall;
+      prev = po ? 'Previous record ' + laptime(po[0]) + (po[1] === me ? ' (yours).' : ' by ' + po[1] + '.')
+                : 'The first finish on this road.';
+      if (m.personal && !(po && po[1] === me))
+        prev += ' Your previous best ' + laptime(m.previous_personal) + '.';
+    } else {
+      prev = 'Your previous best ' + laptime(m.previous_personal) + '.';
+      if (m.previous_overall) prev += ' Record: ' + laptime(m.previous_overall[0]) + ' by ' + m.previous_overall[1] + '.';
+    }
+    congratsText('.prev', prev);
+    if (!congratsEl.open) congratsEl.showModal();
+    document.getElementById('congrats-ok').focus();
+  };
+  document.getElementById('congrats-ok').addEventListener('click', function () { congratsEl.close(); });
+  congratsEl.addEventListener('click', function (e) { if (e.target === congratsEl) congratsEl.close(); });
+  congratsEl.addEventListener('keydown', function (e) {
+    e.stopPropagation();                              // not game input
+    if (e.key === 'Enter') { e.preventDefault(); congratsEl.close(); }
+  });
+  congratsEl.addEventListener('keyup', function (e) { e.stopPropagation(); });
+  congratsEl.addEventListener('close', function () { canvas.focus(); });
 
   // Your multiplayer name: the relay's random two words, or one you choose.
   var nameItemEl = document.getElementById('name-item');

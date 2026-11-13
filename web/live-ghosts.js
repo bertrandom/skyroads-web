@@ -148,6 +148,7 @@
       else if (m.t === 'players') showPlayers(m.list);
       else if (m.t === 'online') setOnline(m.count | 0);
       else if (m.t === 'nonce' && m.sub === sub) Module._ghost_set_nonce(m.n >>> 0);
+      else if (m.t === 'record' && window.skyRecord) window.skyRecord(m);   // congratulations
       else if (m.t === 'stats' && statsReply) { var sr = statsReply; statsReply = null; sr(m); }
       else if (m.t === 'you') {
         myName = String(m.name);

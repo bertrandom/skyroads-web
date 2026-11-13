@@ -28,7 +28,9 @@ and seconds played (by the game clock, capped at the real time), and per
 road the fastest finish (game clock to the finish line) with its player,
 plus each player's own fastest finish per road, each with the time it was
 set. Every road record ever set is kept in `record_history`, so a record
-that gets beaten is still on file.
+that gets beaten is still on file. When a finish sets the road's all-time
+record or beats the player's personal best (not on their first finish of a
+road), the relay tells them and the page shows a Congratulations! modal.
 
 A finished road only counts when the run checks out: the relay looks at the
 run's own frames (starts at the start line, clock never goes backwards,

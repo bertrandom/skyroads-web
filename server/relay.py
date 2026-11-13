@@ -40,6 +40,13 @@ Protocol (one WebSocket per player):
     text   {"t":"stats"}                   ask for the statistics
   server -> client
     text   {"t":"nonce","n":N,"sub":S}     the number to sign this run's end with
+    text   {"t":"record","road":R,"seconds":S,"overall":O,"personal":P,
+            "previous_overall":[seconds, name] or null,
+            "previous_personal":seconds or null}
+                                           your finish just set the road's
+                                           all-time record (O) and/or beat
+                                           your personal best (P; not on
+                                           your first finish of a road)
     text   {"t":"stats","all":A,"you":Y}   statistics: A = {players, attempts,
                                            completions, seconds, roads:
                                            [[attempts, completions, seconds]
@@ -254,12 +261,20 @@ class Stats:
 
     def finished(self, road, seconds, player, name):
         """Record a finish time: the player's best on the road, and the
-        road's record if it is the fastest."""
+        road's record if it is the fastest.  Returns a "record" message for
+        the player if either was beaten, else None."""
         now = int(time.time())
-        self.db.execute("UPDATE road_stats SET best = ?, best_at = ? WHERE player = ? AND road = ? "
-                        "AND (best IS NULL OR best > ?)", (seconds, now, player, road, seconds))
-        current = self.db.execute("SELECT seconds FROM best_times WHERE road = ?", (road,)).fetchone()
-        if current is None or seconds < current[0]:
+        mine = self.db.execute("SELECT best FROM road_stats WHERE player = ? AND road = ?",
+                               (player, road)).fetchone()
+        mine = mine[0] if mine else None
+        personal = mine is None or seconds < mine
+        if personal:
+            self.db.execute("UPDATE road_stats SET best = ?, best_at = ? WHERE player = ? "
+                            "AND road = ?", (seconds, now, player, road))
+        current = self.db.execute("SELECT seconds, name FROM best_times WHERE road = ?",
+                                  (road,)).fetchone()
+        overall = current is None or seconds < current[0]
+        if overall:
             self.db.execute("INSERT INTO best_times (road, seconds, player, name, at) "
                             "VALUES (?, ?, ?, ?, ?) ON CONFLICT (road) DO UPDATE SET "
                             "seconds = excluded.seconds, player = excluded.player, "
@@ -268,6 +283,13 @@ class Stats:
             self.db.execute("INSERT INTO record_history (road, seconds, player, name, at) "
                             "VALUES (?, ?, ?, ?, ?)", (road, seconds, player, name, now))
         self.db.commit()
+        beaten = personal and mine is not None      # a first finish is no news
+        if not (beaten or overall):
+            return None
+        return {"t": "record", "road": road, "seconds": round(seconds, 2),
+                "overall": overall, "personal": beaten,
+                "previous_overall": [round(current[0], 2), current[1]] if current else None,
+                "previous_personal": round(mine, 2) if mine is not None else None}
 
     def renamed(self, player, name):
         self.db.execute("UPDATE best_times SET name = ? WHERE player = ?", (name, player))
@@ -690,8 +712,10 @@ class Player:
                             and self.finish and self.finish[0] == road):
                         self.finishable = False
                         stats.count(self.pid, road, "completions")
-                        stats.finished(road, self.finish[1], self.pid, self.name)
+                        record = stats.finished(road, self.finish[1], self.pid, self.name)
                         self.finish = None
+                        if record:
+                            await self.send_text(record)
                 elif msg.get("t") == "stats":
                     await self.send_text(stats.summary(self.pid) if stats
                                          else {"t": "stats", "error": "unavailable"})
