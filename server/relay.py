@@ -24,8 +24,13 @@ Protocol (one WebSocket per player):
                                            browser: runs with the same P are
                                            never sent back to it
     binary 0x01 + k * 12-byte frames       frames of the current run
-    text   {"t":"end","time":S}            the current run ended after S
-                                           seconds of play (game clock)
+    text   {"t":"end","ticks":T,"finish":F,"sig":G}
+                                           the current run ended: T = run
+                                           clock (36 ticks/s), F = run clock
+                                           at the finish line (0 = not
+                                           finished), G = HMAC-SHA256 (hex) of
+                                           "nonce|road|T|F" with the shared
+                                           key (relay.key)
     text   {"t":"hello","player":P,"name":N}
                                            sent on connecting: your anonymous
                                            id and (optional) chosen name
@@ -34,11 +39,15 @@ Protocol (one WebSocket per player):
                                            started last)
     text   {"t":"stats"}                   ask for the statistics
   server -> client
+    text   {"t":"nonce","n":N,"sub":S}     the number to sign this run's end with
     text   {"t":"stats","all":A,"you":Y}   statistics: A = {players, attempts,
                                            completions, seconds, roads:
                                            [[attempts, completions, seconds]
-                                           x 30]}, Y the same for you
-                                           (without players)
+                                           x 30], best: [[seconds, name, at] or
+                                           null x 30] (fastest finish)}, Y the
+                                           same for you (without players;
+                                           best: [[seconds, at] or null x 30]);
+                                           at = Unix time the time was set
     text   {"t":"online","count":N}        players connected to the relay (one
                                            per browser), sent on hello and
                                            when it changes
@@ -59,6 +68,14 @@ Protocol (one WebSocket per player):
                                            first, colour null), sent when it
                                            changes; an empty list once you
                                            have left the road
+Statistics only count a finished road when the run checks out: its frames
+start at the start line, the clock never runs backwards, the ship never moves
+faster than the game's top speed, it reaches the end of the road (half a row
+before it, the game's finish rule) where the game says, and the end message
+carries a valid signature from the game.  Finish and playing times come from
+the frames, not from the page.  A determined player can still fake a run;
+this only stops casual cheating.
+
 Every player gets a name of two harmless words ("plucky-otter") derived from
 their anonymous id, so it is stable across reloads.  Players can choose their
 own name instead: 3-20 letters, digits and single dashes, starting and ending
@@ -71,6 +88,8 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import hmac
+import secrets
 import json
 import logging
 import os
@@ -185,8 +204,33 @@ class Stats:
                 attempts    INTEGER NOT NULL DEFAULT 0,
                 completions INTEGER NOT NULL DEFAULT 0,
                 seconds     REAL    NOT NULL DEFAULT 0,
+                best        REAL,
+                best_at     INTEGER,
                 PRIMARY KEY (player, road));
+            CREATE TABLE IF NOT EXISTS best_times (
+                road    INTEGER PRIMARY KEY,
+                seconds REAL    NOT NULL,
+                player  TEXT    NOT NULL,
+                name    TEXT    NOT NULL,
+                at      INTEGER NOT NULL);
+            -- every road record ever set, the current one included
+            CREATE TABLE IF NOT EXISTS record_history (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                road    INTEGER NOT NULL,
+                seconds REAL    NOT NULL,
+                player  TEXT    NOT NULL,
+                name    TEXT    NOT NULL,
+                at      INTEGER NOT NULL);
         """)
+        columns = [row[1] for row in self.db.execute("PRAGMA table_info(road_stats)")]
+        if "best" not in columns:           # databases from before personal bests
+            self.db.execute("ALTER TABLE road_stats ADD COLUMN best REAL")
+        if "best_at" not in columns:
+            self.db.execute("ALTER TABLE road_stats ADD COLUMN best_at INTEGER")
+        if not self.db.execute("SELECT 1 FROM record_history LIMIT 1").fetchone():
+            # records set before the history was kept
+            self.db.execute("INSERT INTO record_history (road, seconds, player, name, at) "
+                            "SELECT road, seconds, player, name, at FROM best_times ORDER BY at")
         self.db.commit()
 
     def seen(self, player):
@@ -208,6 +252,27 @@ class Stats:
                         (player, road, seconds, seconds))
         self.db.commit()
 
+    def finished(self, road, seconds, player, name):
+        """Record a finish time: the player's best on the road, and the
+        road's record if it is the fastest."""
+        now = int(time.time())
+        self.db.execute("UPDATE road_stats SET best = ?, best_at = ? WHERE player = ? AND road = ? "
+                        "AND (best IS NULL OR best > ?)", (seconds, now, player, road, seconds))
+        current = self.db.execute("SELECT seconds FROM best_times WHERE road = ?", (road,)).fetchone()
+        if current is None or seconds < current[0]:
+            self.db.execute("INSERT INTO best_times (road, seconds, player, name, at) "
+                            "VALUES (?, ?, ?, ?, ?) ON CONFLICT (road) DO UPDATE SET "
+                            "seconds = excluded.seconds, player = excluded.player, "
+                            "name = excluded.name, at = excluded.at",
+                            (road, seconds, player, name, now))
+            self.db.execute("INSERT INTO record_history (road, seconds, player, name, at) "
+                            "VALUES (?, ?, ?, ?, ?)", (road, seconds, player, name, now))
+        self.db.commit()
+
+    def renamed(self, player, name):
+        self.db.execute("UPDATE best_times SET name = ? WHERE player = ?", (name, player))
+        self.db.commit()
+
     def summary(self, player):
         def block(rows):
             roads = [[0, 0, 0] for _ in range(ROADS_IN_GAME)]
@@ -221,14 +286,77 @@ class Stats:
             "SELECT road, SUM(attempts), SUM(completions), SUM(seconds) FROM road_stats "
             "GROUP BY road"))
         everyone["players"] = self.db.execute("SELECT COUNT(*) FROM players").fetchone()[0]
+        best = [None] * ROADS_IN_GAME
+        for road, seconds, name, at in self.db.execute(
+                "SELECT road, seconds, name, at FROM best_times"):
+            if 0 <= road < ROADS_IN_GAME:
+                best[road] = [round(seconds, 2), name, at]
+        everyone["best"] = best
         you = block(self.db.execute(
             "SELECT road, attempts, completions, seconds FROM road_stats WHERE player = ?",
             (player or "",)))
+        mine = [None] * ROADS_IN_GAME
+        for road, seconds, at in self.db.execute(
+                "SELECT road, best, best_at FROM road_stats WHERE player = ? AND best IS NOT NULL",
+                (player or "",)):
+            if 0 <= road < ROADS_IN_GAME:
+                mine[road] = [round(seconds, 2), at]
+        you["best"] = mine
         return {"t": "stats", "all": everyone, "you": you}
 
 
 stats = None                        # Stats, unless --db ""
 ROADS_IN_GAME = 30
+RELAY_KEY = None                    # bytes from relay.key: end messages must be signed
+
+# Road lengths in rows (ROADS.LZS, as loaded by 1000:5614): a road is finished
+# once the ship is within half a row of its end.
+ROAD_LENGTHS = [55, 115, 60, 94, 126, 48, 60, 106, 70, 81,
+                199, 164, 112, 237, 201, 137, 153, 163, 147, 186,
+                130, 160, 224, 83, 150, 191, 166, 234, 136, 200]
+TICKS = 36                          # game clock ticks per second
+TOP_SPEED = 0x2AAA                  # rows (16.16) per tick, the game's cap
+START_Z = 3 << 16                   # every run starts 3 rows in
+
+
+def check_run(run, ticks, finish, nonce, sig):
+    """Check a run's frames (and the game's signature of its end).
+    Returns (play seconds, finish seconds or None, problem or None)."""
+    data = run.frames
+    n = len(data) // FRAME
+    if n == 0:
+        return 0.0, None, "no frames"
+    last_t = struct.unpack_from("<H", data, (n - 1) * FRAME)[0]
+    play = last_t / TICKS
+    if not finish:
+        return play, None, None
+    if RELAY_KEY is not None:
+        msg = ("%d|%d|%d|%d" % (nonce or 0, run.road, ticks, finish)).encode()
+        good = hmac.new(RELAY_KEY, msg, hashlib.sha256).hexdigest()
+        if not (isinstance(sig, str) and hmac.compare_digest(good, sig)):
+            return play, None, "bad signature"
+    if n < TICKS:
+        return play, None, "too short"
+    line = ROAD_LENGTHS[run.road] * 65536 - 0x8000
+    prev_t = prev_z = finish_t = None
+    for i in range(n):
+        t, _x, _y, _spr, z = struct.unpack_from("<HHHhI", data, i * FRAME)
+        if i == 0:
+            if t > TICKS or abs(z - START_Z) > 0x2000:
+                return play, None, "does not start at the start"
+        else:
+            if t < prev_t:
+                return play, None, "clock went backwards"
+            if finish_t is None and z - prev_z > (t - prev_t) * TOP_SPEED + 0x400:
+                return play, None, "faster than the top speed"
+        if finish_t is None and z >= line:
+            finish_t = t            # (the finish animation after it is not checked)
+        prev_t, prev_z = t, z
+    if finish_t is None:
+        return play, None, "never reached the end of the road"
+    if abs(finish_t - finish) > TICKS or abs(last_t - ticks) > TICKS:
+        return play, None, "does not match the game's clock"
+    return play, finish_t / TICKS, None
 
 
 online_count = 0
@@ -272,6 +400,8 @@ class Player:
         self.custom = None                  # chosen name, else name_for(key)
         self.greeted = False                # sent hello (counted as online)
         self.finishable = False             # last run may still be completed
+        self.finish = None                  # (road, seconds) of the last run
+        self.nonce = None                   # to check the end's signature
         self.road = None                    # road of the current/last run
         self.racing = False
         self.ended_at = float("-inf")
@@ -344,6 +474,8 @@ class Player:
             error = "taken"
         else:
             self.custom = name
+        if not error and stats and self.pid:
+            stats.renamed(self.pid, self.name)  # fastest times show the new name
         reply = {"t": "you", "name": self.name}
         if error and not quiet_errors:
             reply["error"] = error
@@ -433,8 +565,11 @@ class Player:
         previous, self.road, self.racing = self.road, road, True
         self.run = Run(self, road, min(max(ago, 0.0), WINDOW))
         self.run_began = time.monotonic() - max(ago, 0.0)   # for the time check
+        self.nonce = None
         if ago < 1.0:                   # not a run resent after a reconnect
             self.finishable = True      # one completion may be reported
+            self.nonce = secrets.randbits(32)
+            await self.send_text({"t": "nonce", "n": self.nonce, "sub": sub})
             if stats and self.pid and road < ROADS_IN_GAME:
                 stats.count(self.pid, road, "attempts")
         runs[self.run.id] = self.run
@@ -520,14 +655,21 @@ class Player:
                             and isinstance(ago, (int, float))):
                         await self.start(road, sub, ago / 1000.0, player)
                 elif msg.get("t") == "end":
-                    seconds = msg.get("time")
-                    if (stats and self.pid and self.run and not self.run.ended
-                            and self.run.road < ROADS_IN_GAME
-                            and isinstance(seconds, (int, float)) and seconds > 0):
-                        # game clock, but no more than the real time since the
-                        # run began (and an hour at most)
+                    r, self.finish = self.run, None
+                    ticks, finish = msg.get("ticks"), msg.get("finish")
+                    if (stats and self.pid and r and not r.ended and r.road < ROADS_IN_GAME
+                            and isinstance(ticks, int) and isinstance(finish, int)):
+                        play, finished, problem = check_run(r, ticks, finish, self.nonce,
+                                                            msg.get("sig"))
+                        # the frames' clock, but no more than the real time
+                        # since the run began (and an hour at most)
                         real = time.monotonic() - self.run_began + 5
-                        stats.played(self.pid, self.run.road, min(seconds, real, 3600.0))
+                        stats.played(self.pid, r.road, min(play, real, 3600.0))
+                        if finished is not None and finished <= real:
+                            self.finish = (r.road, finished)
+                        elif finish:
+                            log.info("finish on road %d not counted: %s", r.road,
+                                     problem or "faster than real time")
                     await self.end()
                 elif msg.get("t") == "hello":
                     player = msg.get("player")
@@ -543,10 +685,13 @@ class Player:
                     await self.set_name(msg.get("name") or "")
                 elif msg.get("t") == "completed":
                     road = msg.get("road")
+                    # only a finish the run's frames (and signature) confirm
                     if (stats and self.pid and self.finishable and road == self.road
-                            and isinstance(road, int) and 0 <= road < ROADS_IN_GAME):
+                            and self.finish and self.finish[0] == road):
                         self.finishable = False
                         stats.count(self.pid, road, "completions")
+                        stats.finished(road, self.finish[1], self.pid, self.name)
+                        self.finish = None
                 elif msg.get("t") == "stats":
                     await self.send_text(stats.summary(self.pid) if stats
                                          else {"t": "stats", "error": "unavailable"})
@@ -616,14 +761,23 @@ async def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--unix", metavar="PATH", help="listen on a unix socket instead")
-    ap.add_argument("--db", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats.db"),
+    here = os.path.dirname(os.path.abspath(__file__))
+    ap.add_argument("--db", default=os.path.join(here, "stats.db"),
                     help='SQLite file for the statistics ("" to disable)')
+    ap.add_argument("--key-file", default=os.path.join(here, "relay.key"),
+                    help="hex key the game signs run ends with (same as the "
+                         "build's GHOST_KEY); without it signatures are not checked")
     args = ap.parse_args()
+    global RELAY_KEY
+    if args.key_file and os.path.exists(args.key_file):
+        with open(args.key_file) as f:
+            RELAY_KEY = bytes.fromhex(f.read().strip())
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     global stats
     if args.db:
         stats = Stats(args.db)
-        log.info("statistics in %s", args.db)
+        log.info("statistics in %s (%s)", args.db,
+                 "signed run ends" if RELAY_KEY else "run ends NOT signed: no key file")
     if args.unix:
         if os.path.exists(args.unix):
             os.unlink(args.unix)            # stale socket from a previous run

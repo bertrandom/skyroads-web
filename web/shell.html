@@ -68,7 +68,7 @@
   #players.outside { left: auto; right: calc(100% + 12px); top: 12px;
                      font-size: 14px; background: rgba(10, 20, 35, .85); border: 1px solid #357; }
   /* statistics modal */
-  #stats { width: min(600px, calc(100vw - 32px)); max-height: 85vh; padding: 0; overflow: hidden;
+  #stats { width: min(760px, calc(100vw - 32px)); max-height: 85vh; padding: 0; overflow: hidden;
            background: #0b1524; color: #cde; border: 1px solid #357; border-radius: 6px;
            font: 13px/1.4 system-ui, sans-serif; }
   #stats[open] { display: flex; flex-direction: column; }
@@ -96,6 +96,12 @@
   #stats td.road { text-align: left; opacity: .75; }
   #stats tbody tr.first td { border-top: 1px solid #1c2d44; }
   #stats td.zero { opacity: .35; }
+  #stats .sep { border-left: 1px solid #357; }    /* between All time and Personal */
+  #stats td.when[data-set] { cursor: help; text-decoration: underline dotted rgba(153, 204, 255, .4); }
+  #stats-tip { position: fixed; z-index: 1; pointer-events: none; display: none; white-space: nowrap;
+               padding: 4px 8px; border-radius: 4px; background: #1c2d44; color: #dde;
+               border: 1px solid #357; font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
+  #stats td.by { text-align: left; max-width: 10em; overflow: hidden; text-overflow: ellipsis; }
   #stats .note { margin: 0; opacity: .8; }
   #help { margin: 4px 0 0; padding: 6px 8px 4px; border-top: 1px solid #357;
           display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 12px; }
@@ -113,6 +119,7 @@
   <header><h2 id="stats-title">Statistics</h2>
     <button id="stats-close" aria-label="Close">&times;</button></header>
   <div id="stats-body"></div>
+  <div id="stats-tip" role="tooltip"></div>
 </dialog>
 <div id="settings">
   <div id="menu" class="chip" role="menu">
@@ -329,7 +336,19 @@
     var h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
     return h ? h + 'h ' + m + 'm' : m ? m + 'm ' + s + 's' : s + 's';
   }
-  function cell(n) { return '<td' + (n ? '' : ' class="zero"') + '>' + num(n) + '</td>'; }
+  function cell(n, cls) {
+    cls = (cls ? cls + ' ' : '') + (n ? '' : 'zero');
+    return '<td' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '>' + num(n) + '</td>';
+  }
+  function setAt(at) {              // tooltip: when a fastest time was set
+    if (!at) return '';
+    var d = new Date(at * 1000);
+    return ' data-set="Set ' + esc(d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })) + '"';
+  }
+  function laptime(sec) {           // 1:23.45
+    var m = Math.floor(sec / 60), s = (sec - m * 60).toFixed(2);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
   function renderStats(st) {
     if (!st) {
       statsBodyEl.innerHTML = '<p class="note">Statistics are kept by the multiplayer server. ' +
@@ -346,15 +365,23 @@
         '<dt>Roads attempted</dt><dd>' + num(y.attempts) + '</dd>' +
         '<dt>Roads completed</dt><dd>' + num(y.completions) + '</dd>' +
         '<dt>Time playing</dt><dd>' + duration(y.seconds) + '</dd></dl></div></div>' +
-      '<table><thead><tr><th colspan="2"></th><th colspan="2">All time</th><th colspan="2">Personal</th></tr>' +
+      '<table><thead><tr><th colspan="2"></th><th colspan="4">All time</th><th colspan="3" class="sep">Personal</th></tr>' +
       '<tr><th colspan="2" style="text-align:left">Road</th><th>Attempts</th><th>Completed</th>' +
-      '<th>Attempts</th><th>Completed</th></tr></thead><tbody>';
+      '<th>Fastest</th><th style="text-align:left">By</th>' +
+      '<th class="sep">Attempts</th><th>Completed</th><th>Fastest</th></tr></thead><tbody>';
     for (var r = 0; r < 30; r++) {
-      var ar = a.roads[r] || [0, 0], yr = y.roads[r] || [0, 0];
+      var ar = a.roads[r] || [0, 0], yr = y.roads[r] || [0, 0], best = (a.best || [])[r];
+      var mine = (y.best || [])[r];
       html += '<tr' + (r % 3 ? '' : ' class="first"') + '>' +
         (r % 3 ? '' : '<td class="world" rowspan="3">' + esc(WORLDS[r / 3 | 0]) + '</td>') +
         '<td class="road">Road ' + (r % 3 + 1) + '</td>' +
-        cell(ar[0]) + cell(ar[1]) + cell(yr[0]) + cell(yr[1]) + '</tr>';
+        cell(ar[0]) + cell(ar[1]) +
+        (best ? '<td class="when"' + setAt(best[2]) + '>' + laptime(best[0]) + '</td>' +
+                '<td class="by" title="' + esc(best[1]) + '">' + esc(best[1]) + '</td>'
+              : '<td class="zero">\u2013</td><td class="zero by"></td>') +
+        cell(yr[0], 'sep') + cell(yr[1]) +
+        (mine ? '<td class="when"' + setAt(mine[1]) + '>' + laptime(mine[0]) + '</td>'
+              : '<td class="zero">\u2013</td>') + '</tr>';
     }
     statsBodyEl.innerHTML = html + '</tbody></table>';
   }
@@ -368,7 +395,27 @@
   statsEl.addEventListener('click', function (e) { if (e.target === statsEl) statsEl.close(); });
   statsEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
   statsEl.addEventListener('keyup', function (e) { e.stopPropagation(); });
-  statsEl.addEventListener('close', function () { canvas.focus(); });
+  statsEl.addEventListener('close', function () { hideTip(); canvas.focus(); });
+
+  // "Set <date>" above a fastest time while it is hovered (or tapped)
+  var tipEl = document.getElementById('stats-tip');
+  function showTip(td) {
+    var r = td.getBoundingClientRect();
+    tipEl.textContent = td.getAttribute('data-set');
+    tipEl.style.display = 'block';
+    var w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    var x = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+    var y = r.top - h - 6;
+    if (y < 8) y = r.bottom + 6;                  // no room above: below
+    tipEl.style.left = x + 'px';
+    tipEl.style.top = y + 'px';
+  }
+  function hideTip() { tipEl.style.display = 'none'; }
+  function tipCell(e) { return e.target.closest && e.target.closest('td[data-set]'); }
+  statsBodyEl.addEventListener('mouseover', function (e) { var td = tipCell(e); if (td) showTip(td); });
+  statsBodyEl.addEventListener('mouseout', function (e) { if (tipCell(e)) hideTip(); });
+  statsBodyEl.addEventListener('click', function (e) { var td = tipCell(e); if (td) showTip(td); else hideTip(); });
+  statsBodyEl.addEventListener('scroll', hideTip);
 
   // Your multiplayer name: the relay's random two words, or one you choose.
   var nameItemEl = document.getElementById('name-item');

@@ -147,6 +147,7 @@
       }
       else if (m.t === 'players') showPlayers(m.list);
       else if (m.t === 'online') setOnline(m.count | 0);
+      else if (m.t === 'nonce' && m.sub === sub) Module._ghost_set_nonce(m.n >>> 0);
       else if (m.t === 'stats' && statsReply) { var sr = statsReply; statsReply = null; sr(m); }
       else if (m.t === 'you') {
         myName = String(m.name);
@@ -239,23 +240,24 @@
   Module.skyGhostLive = function () { return multiplayer; };
   Module.skyGhostStart = function (r) {
     clearTimeout(hideTimer);
-    sub++; road = r; racing = true; runStart = Date.now(); lastTick = 0;
+    sub++; road = r; racing = true; runStart = Date.now();
     updateListVisibility();
     pending = []; sent = [];
     if (open()) sendStart();
   };
   /* the run is followed in single player too, so that switching multiplayer
    * on mid-run can send it to the relay */
-  var lastTick = 0;                     // run clock, for the playing time
   Module.skyGhostFrame = function (t, x, y, spr, z) {
-    lastTick = t;
     if (racing) pending.push(t, x, y, spr, z);
   };
-  Module.skyGhostEnd = function () {
+  /* from port/ghost.c: finishTicks = run clock when the road was finished
+   * (0 = not finished), ticks = run clock at the end (36 a second), sig =
+   * the game's signature of both with the relay's nonce for this run */
+  Module.skyGhostEnd = function (finishTicks, ticks, sig) {
     flush();
     racing = false; sent = [];
-    // seconds of play by the game clock (36 ticks a second)
-    if (open()) ws.send(JSON.stringify({ t: 'end', time: Math.round(lastTick / 36 * 10) / 10 }));
+    if (open())
+      ws.send(JSON.stringify({ t: 'end', ticks: ticks >>> 0, finish: finishTicks >>> 0, sig: String(sig || '') }));
     // after a crash the game restarts the road right away (~1 ms): keep the
     // list up over that gap, hide it when the player goes back to the menus
     clearTimeout(hideTimer);

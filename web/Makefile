@@ -5,9 +5,10 @@
 #                   headers required for SharedArrayBuffer (threads)
 #   make clean
 #
-#   make GHOST_RELAY=wss://example.com/skyroads-relay
-#                   show live ghosts of other players through the relay in
-#                   ../server (without it: your own saved runs)
+#   make GHOST_RELAY=wss://example.com/skyroads-relay GHOST_KEY=<hex>
+#                   live ghosts of other players through the relay in
+#                   ../server; GHOST_KEY (the relay's relay.key) lets the
+#                   game sign the end of each run for the statistics
 #
 # The game code is shared with the native port in ../port.
 EMCC  ?= emcc
@@ -16,11 +17,12 @@ DATA  := ../resources/Skyroads
 OUT   := dist
 BUILD := build
 GHOST_RELAY ?=
+GHOST_KEY ?=
 
-SRCS := main.c runtime.c video.c platform.c hw.c audio.c manual.c render.c game.c ghost.c
+SRCS := main.c runtime.c video.c platform.c hw.c audio.c manual.c render.c game.c ghost.c sign.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 
-CFLAGS := -O2 -std=gnu11 -I$(PORT) -pthread -sUSE_SDL=2 \
+CFLAGS := -O2 -std=gnu11 -I$(PORT) -I$(BUILD) -pthread -sUSE_SDL=2 \
           -fno-strict-aliasing -fwrapv -w -Wno-int-conversion \
           -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types
 
@@ -46,6 +48,11 @@ $(BUILD)/%.o: $(PORT)/%.c $(PORT)/compat.h $(PORT)/protos.h $(PORT)/image_data.h
 
 $(BUILD):
 	mkdir -p $(BUILD)
+
+# the relay key for sign.c (rewritten only when GHOST_KEY changes)
+$(BUILD)/relay_key.h: FORCE | $(BUILD)
+	@python3 gen_key_header.py $@ '$(GHOST_KEY)'
+$(BUILD)/sign.o: $(BUILD)/relay_key.h
 
 # only the files the game reads
 $(BUILD)/data: $(wildcard $(DATA)/*.LZS $(DATA)/*.DAT $(DATA)/*.SND $(DATA)/*.REC)

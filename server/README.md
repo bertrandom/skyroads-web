@@ -23,8 +23,24 @@ players are connected to the relay in total (one per browser).
 
 The relay also keeps all-time statistics in SQLite (`stats.db` next to
 `relay.py`, or `--db PATH`; `--db ""` turns them off): every player id it has
-seen, and per player and road the number of races started, roads finished
-and seconds played (by the game clock, capped at the real time). Finishing a
+seen, per player and road the number of races started, roads finished
+and seconds played (by the game clock, capped at the real time), and per
+road the fastest finish (game clock to the finish line) with its player,
+plus each player's own fastest finish per road, each with the time it was
+set. Every road record ever set is kept in `record_history`, so a record
+that gets beaten is still on file.
+
+A finished road only counts when the run checks out: the relay looks at the
+run's own frames (starts at the start line, clock never goes backwards,
+never faster than the game's top speed, reaches the end of the road where
+the game says) and takes the finish and playing times from them. The end
+message is also signed by the game (HMAC-SHA256 over a per-run nonce from
+the relay, the road and the run clock) with a key shared by the relay and
+the build: `relay.key` next to `relay.py` (hex; `--key-file` to move it,
+not in git), and the same key passed to the web build as `GHOST_KEY`.
+Without a key file the relay skips the signature check. This stops casual
+cheating only: the key can be dug out of the WebAssembly, and a carefully
+faked run can still pass. Finishing a
 road is reported by the page when the game counts it in its save. The
 settings menu's Statistics shows the totals for everyone and for you.
 
@@ -58,7 +74,8 @@ Game updates (build on your machine with the relay URL, then copy `dist/`):
 
 ```sh
 cd ../web
-make GHOST_RELAY=wss://skyroads.smittn.com/skyroads-relay
+make GHOST_RELAY=wss://skyroads.smittn.com/skyroads-relay \
+     GHOST_KEY=$(ssh nuke sudo cat /web/skyroads-relay/relay.key)
 rsync -a --delete dist/ nuke:/tmp/skyroads-game/
 ssh nuke 'sudo rsync -a --delete --chown=web:web /tmp/skyroads-game/ /web/skyroads/'
 ```
