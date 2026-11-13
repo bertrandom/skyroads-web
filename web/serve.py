@@ -9,7 +9,8 @@ import sys
 class Handler(http.server.SimpleHTTPRequestHandler):
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
                       ".wasm": "application/wasm", ".js": "text/javascript",
-                      ".data": "application/octet-stream"}
+                      ".data": "application/octet-stream",
+                      ".webmanifest": "application/manifest+json"}
 
     def end_headers(self):
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")

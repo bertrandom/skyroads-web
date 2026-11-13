@@ -4,8 +4,9 @@
 #   ./deploy.sh              staging: nuke, https://skyroads.smittn.com
 #   ./deploy.sh production   production: server, https://skyroads.org
 #
-# Builds the game, deploys it (and the relay if relay.py changed) and checks
-# the live site. DEPLOY_HOST and DEPLOY_SITE override the target's host and
+# Builds the game, deploys it (and the relay if relay.py changed, and the
+# nginx site from server/nginx-<site>.conf if that changed) and checks the
+# live site. DEPLOY_HOST and DEPLOY_SITE override the target's host and
 # site. Each server keeps the game in /web/skyroads and the relay in
 # /web/skyroads-relay (see server/README.md), both owned by the `web` user.
 # The relay key (relay.key) is read from the server and handed to the build
@@ -13,8 +14,8 @@
 set -euo pipefail
 
 case ${1:-staging} in
-    staging)    host=nuke;   site=https://skyroads.smittn.com ;;
-    production) host=server; site=https://skyroads.org ;;
+    staging)    host=nuke;   site=https://skyroads.smittn.com; nginx=skyroads.smittn.com ;;
+    production) host=server; site=https://skyroads.org;        nginx=skyroads.org ;;
     *) echo "usage: $0 [staging|production]" >&2; exit 2 ;;
 esac
 HOST=${DEPLOY_HOST:-$host}
@@ -43,10 +44,26 @@ STAGE=$(ssh -o BatchMode=yes "$HOST" 'mktemp -d /tmp/skyroads-deploy.XXXXXX')
 trap 'ssh -o BatchMode=yes "$HOST" "rm -rf $STAGE" || true' EXIT
 rsync -a --delete web/dist/ "$HOST:$STAGE/game/"
 rsync -a server/relay.py "$HOST:$STAGE/relay.py"
+rsync -a "server/nginx-$nginx.conf" "$HOST:$STAGE/nginx.conf"
 
 step "Installing on $HOST"
-ssh -o BatchMode=yes "$HOST" STAGE="$STAGE" GAME_DIR="$GAME_DIR" RELAY_DIR="$RELAY_DIR" bash -s <<'REMOTE'
+ssh -o BatchMode=yes "$HOST" STAGE="$STAGE" GAME_DIR="$GAME_DIR" RELAY_DIR="$RELAY_DIR" NGINX="$nginx" bash -s <<'REMOTE'
 set -euo pipefail
+conf=/etc/nginx/sites-available/$NGINX
+if sudo -n cmp -s "$STAGE/nginx.conf" "$conf"; then
+    echo "nginx: unchanged"
+else
+    sudo -n cp -p "$conf" "$STAGE/nginx.conf.old"
+    sudo -n install -m 644 "$STAGE/nginx.conf" "$conf"
+    if sudo -n nginx -t -q; then
+        sudo -n systemctl reload nginx
+        echo "nginx: $conf updated and reloaded"
+    else
+        sudo -n install -m 644 "$STAGE/nginx.conf.old" "$conf"
+        echo "error: the new nginx config failed nginx -t; the old one is back" >&2
+        exit 1
+    fi
+fi
 sudo -n rsync -a --delete --chown=web:web "$STAGE/game/" "$GAME_DIR/"
 echo "game: $GAME_DIR updated"
 if sudo -n cmp -s "$STAGE/relay.py" "$RELAY_DIR/relay.py"; then

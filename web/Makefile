@@ -37,7 +37,18 @@ LDFLAGS := -O2 -pthread -sUSE_SDL=2 \
            --preload-file $(BUILD)/data@/data \
            --shell-file shell.html
 
-all: $(OUT)/index.html $(OUT)/live-ghosts.js $(OUT)/relay.js $(OUT)/about.html
+# site icons (drawn by icons/gen_icons.py; the outputs are committed) and the web app manifest
+ICONS     := favicon.ico icon.svg apple-touch-icon.png icon-192.png icon-512.png icon-maskable-512.png
+ICONS_OUT := $(addprefix $(OUT)/,$(ICONS)) $(OUT)/manifest.webmanifest
+
+all: $(OUT)/index.html $(OUT)/live-ghosts.js $(OUT)/relay.js $(OUT)/about.html $(ICONS_OUT)
+
+$(OUT)/%: icons/%
+	mkdir -p $(OUT)
+	cp $< $@
+$(OUT)/manifest.webmanifest: manifest.webmanifest
+	mkdir -p $(OUT)
+	cp $< $@
 
 # generated sources come from the native port's pipeline
 $(PORT)/game.c $(PORT)/protos.h $(PORT)/image_data.h:

@@ -105,7 +105,7 @@ Updates: run `./deploy.sh` (staging) or `./deploy.sh production` from the top
 of the repo. It reads the relay key from the server over ssh (it only ever lives in the environment of `make`), builds
 `web/dist` for that site's `wss://…/skyroads-relay`, copies it to
 `/web/skyroads/` as `web`, and checks the live site serves the new
-`index.wasm`. If `relay.py` changed it also backs up `stats.db` to
+`index.wasm`. If `nginx-<site>.conf` changed it installs it in `/etc/nginx/sites-available/` and reloads nginx (putting the old one back if `nginx -t` fails). If `relay.py` changed it also backs up `stats.db` to
 `stats.db.bak-DATE`, installs it and restarts `skyroads-relay` (live runs in
 memory are lost); otherwise the relay is left running. `DEPLOY_HOST`,
 `DEPLOY_SITE` and `GHOST_RELAY` override the host, site and relay URL.
