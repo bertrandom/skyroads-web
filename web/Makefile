@@ -37,8 +37,8 @@ LDFLAGS := -O2 -pthread -sUSE_SDL=2 \
            --preload-file $(BUILD)/data@/data \
            --shell-file shell.html
 
-# site icons (drawn by icons/gen_icons.py; the outputs are committed) and the web app manifest
-ICONS     := favicon.ico icon.svg apple-touch-icon.png icon-192.png icon-512.png icon-maskable-512.png
+# site icons (made from a frame of the intro by icons/gen_icons.py; committed) and the web app manifest
+ICONS     := favicon.ico apple-touch-icon.png icon-192.png icon-512.png icon-maskable-512.png
 ICONS_OUT := $(addprefix $(OUT)/,$(ICONS)) $(OUT)/manifest.webmanifest
 
 all: $(OUT)/index.html $(OUT)/live-ghosts.js $(OUT)/relay.js $(OUT)/about.html $(ICONS_OUT)
