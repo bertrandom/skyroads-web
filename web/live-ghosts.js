@@ -77,6 +77,7 @@
     ws.binaryType = 'arraybuffer';
     ws.onopen = function () {
       backoff = 1000;
+      ws.send(JSON.stringify({ t: 'hello', player: player, name: storedName() }));
       if (racing) sendStart();          // reconnected mid-run: resend it
     };
     ws.onclose = function () { ws = null; showPlayers([]); if (multiplayer) retry(); };
@@ -138,6 +139,11 @@
         Module._ghost_remote_remove(m.id);
       }
       else if (m.t === 'players') showPlayers(m.list);
+      else if (m.t === 'you') {
+        myName = String(m.name);
+        if (nameReply) { var cb = nameReply; nameReply = null; cb(m.error || null); }
+        if (window.skyNameChanged) window.skyNameChanged();
+      }
       return;
     }
     if (e.data.byteLength < 16) return;
@@ -152,6 +158,37 @@
   }
 
   /* settings menu (shell.html) */
+  /* your name: random two words from the relay unless you chose one
+   * (kept in localStorage, checked again by the relay) */
+  var myName = null, nameReply = null;
+  var NAME_RE = /^(?=.{3,20}$)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/;
+  function storedName() {
+    try { return localStorage.getItem('skyroads.name') || ''; } catch (e) { return ''; }
+  }
+  function storeName(n) {
+    try { if (n) localStorage.setItem('skyroads.name', n); else localStorage.removeItem('skyroads.name'); } catch (e) {}
+  }
+  Module.skyGhostName = function () { return myName || storedName() || null; };
+  Module.skyGhostChosenName = storedName;
+  Module.skyGhostNameValid = function (n) { return n === '' || NAME_RE.test(n); };
+  /* cb(error): null, 'invalid', 'taken' or 'offline' */
+  Module.skyGhostSetName = function (n, cb) {
+    if (!Module.skyGhostNameValid(n)) { cb('invalid'); return; }
+    if (!open()) {                      // single player / offline: used when connecting
+      storeName(n);
+      if (n) myName = n; else myName = null;
+      cb(null);
+      return;
+    }
+    var timer = setTimeout(function () { nameReply = null; cb('offline'); }, 5000);
+    nameReply = function (err) {
+      clearTimeout(timer);
+      if (!err) storeName(n);
+      cb(err);
+    };
+    ws.send(JSON.stringify({ t: 'name', name: n }));
+  };
+
   Module.skyGhostMultiplayer = function () { return multiplayer; };
   Module.skyGhostSetMultiplayer = function (on) {
     multiplayer = !!on;

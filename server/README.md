@@ -11,8 +11,11 @@ game replays each run at the same run time as yours: someone who started 20 s
 before you shows up where they were 20 s into their run.
 
 Each player gets a name of two harmless random words (`plucky-otter`). The
-relay derives it from the browser's anonymous id, so it stays the same and
-nobody can pick their own. While you race, the players on your road are
+relay derives it from the browser's anonymous id, so it stays the same across
+reloads. Players can choose their own name in the settings menu instead:
+3-20 letters, digits and single dashes, starting and ending with a letter or
+digit, and not already used by someone online (ignoring case). The relay
+checks these rules itself; an empty name goes back to the random one. While you race, the players on your road are
 listed over the top left of the game, each with the colour of their ghost.
 Players stay listed for 15 s after a run (`GRACE`), long enough for the game
 to restart the road after a crash.

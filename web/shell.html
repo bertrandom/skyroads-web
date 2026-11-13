@@ -21,9 +21,17 @@
   #settings { position: absolute; right: 10px; bottom: 10px; display: flex;
               flex-direction: column; align-items: flex-end; gap: 6px; }
   #settings .chip { position: static; }
-  #gear { cursor: pointer; opacity: .5; font-size: 16px; line-height: 1; padding: 6px 8px;
-          display: flex; }
+  #bar { display: flex; gap: 6px; }
+  #gear, .quick { cursor: pointer; font-size: 16px; line-height: 1; padding: 6px 8px; display: flex; }
+  #gear { opacity: .5; }
   #gear svg { width: 18px; height: 18px; fill: currentColor; transition: transform .2s; }
+  /* sound / full screen toggles shown next to the gear while the menu is open */
+  .quick { display: none; }
+  #settings.open .quick { display: flex; }
+  .quick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2;
+               stroke-linecap: round; stroke-linejoin: round; }
+  .quick:hover, .quick:focus-visible { background: #234; }
+  .quick:not(.on) .i-on, .quick.on .i-off { display: none; }
   #gear:hover, #settings.open #gear { opacity: 1; }
   #settings.open #gear svg { transform: rotate(60deg); }
   #menu { display: none; flex-direction: column; padding: 4px; min-width: 150px; }
@@ -32,7 +40,17 @@
                  display: flex; justify-content: space-between; gap: 16px; }
   #menu button:hover, #menu button:focus-visible { background: #234; }
   #menu .state { opacity: .7; }
-  #menu button[hidden] { display: none; }
+  #menu button[hidden], #menu form[hidden] { display: none; }
+  #menu .state { max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #name-form { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 8px; }
+  #name-form .row { display: flex; gap: 6px; }
+  #name-input { flex: 1; min-width: 0; width: 11em; font: inherit; color: #dde; background: #0b1524;
+                border: 1px solid #357; border-radius: 3px; padding: 4px 6px; outline: none; }
+  #name-input:focus { border-color: #6af; }
+  #name-form button { all: unset; cursor: pointer; padding: 4px 8px; border-radius: 3px; background: #234; }
+  #name-form button:hover, #name-form button:focus-visible { background: #2c4a6e; }
+  #name-msg { font-size: 11px; opacity: .8; max-width: 15em; }
+  #name-msg.error { color: #f99; opacity: 1; }
   #screen { position: relative; }
   /* players on this road (live ghosts), over the top left of the game */
   #players { position: absolute; left: 1.5%; top: 2%; margin: 0; padding: .35em .6em;
@@ -62,6 +80,15 @@
     <button id="fs" role="menuitemcheckbox">Full screen <span class="state"></span></button>
     <button id="mute" role="menuitemcheckbox">Sound <span class="state"></span></button>
     <button id="multi" role="menuitemcheckbox" hidden>Multiplayer <span class="state"></span></button>
+    <button id="name-item" role="menuitem" hidden>Name <span class="state"></span></button>
+    <form id="name-form" hidden autocomplete="off">
+      <div class="row">
+        <input id="name-input" maxlength="20" spellcheck="false" autocapitalize="off"
+               placeholder="random name" aria-label="Your name" aria-describedby="name-msg">
+        <button type="submit">Save</button>
+      </div>
+      <div id="name-msg"></div>
+    </form>
     <dl id="help">
       <dt>←&nbsp;→</dt><dd>Steer</dd>
       <dt>↑&nbsp;↓</dt><dd>Speed</dd>
@@ -70,8 +97,18 @@
       <dt>Esc</dt><dd>Back</dd>
     </dl>
   </div>
+  <div id="bar">
+  <button id="q-fs" class="chip quick" aria-label="Full screen" aria-pressed="false">
+    <svg class="i-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8V3h5"/><path d="M16 3h5v5"/><path d="M21 16v5h-5"/><path d="M8 21H3v-5"/></svg>
+    <svg class="i-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v5H3"/><path d="M21 8h-5V3"/><path d="M16 21v-5h5"/><path d="M3 16h5v5"/></svg>
+  </button>
+  <button id="q-mute" class="chip quick" aria-label="Sound" aria-pressed="true">
+    <svg class="i-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
+    <svg class="i-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>
+  </button>
   <button id="gear" class="chip" title="Settings" aria-label="Settings" aria-haspopup="menu"
           aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7 7 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7 7 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.39 1.05.7 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7 7 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg></button>
+  </div>
 </div>
 <script>
   var statusEl = document.getElementById('status');
@@ -81,17 +118,18 @@
 
   // SDL resumes audio by itself once the page has seen a user gesture; this
   // just does it immediately.
-  function unlockAudio() {
+  function typing(e) { return e.target && e.target.tagName === 'INPUT'; }
+  function unlockAudio(e) {
     var ac = audioContext();
     if (ac && ac.state !== 'running') ac.resume();
-    canvas.focus();
+    if (!typing(e)) canvas.focus();
   }
   ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
     window.addEventListener(ev, unlockAudio, true);
   });
   window.addEventListener('keydown', function (e) {
     // keep arrows / space from scrolling the page
-    if ([32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
+    if (!typing(e) && [32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
   }, true);
 
   // ---- settings menu: full screen, sound, multiplayer ----
@@ -99,10 +137,13 @@
   var gearEl = document.getElementById('gear');
   var fsEl = document.getElementById('fs');
   var muteEl = document.getElementById('mute');
+  var qFsEl = document.getElementById('q-fs');
+  var qMuteEl = document.getElementById('q-mute');
   var muted = false;
   try { muted = localStorage.getItem('skyroads.muted') === '1'; } catch (e) {}
 
   function setMenuOpen(open) {
+    if (!open) closeNameForm();
     settingsEl.classList.toggle('open', open);
     gearEl.setAttribute('aria-expanded', open);
     if (!open) canvas.focus();  // keep Space/Enter going to the game, not a button
@@ -110,6 +151,7 @@
   gearEl.addEventListener('click', function (e) {
     e.stopPropagation();
     updateMultiItem();
+    updateNameItem();
     setMenuOpen(!settingsEl.classList.contains('open'));
   });
   document.addEventListener('click', function (e) {
@@ -123,14 +165,24 @@
     var on = isFullscreen();
     fsEl.querySelector('.state').textContent = on ? 'On' : 'Off';
     fsEl.setAttribute('aria-checked', on);
+    qFsEl.classList.toggle('on', on);
+    qFsEl.setAttribute('aria-pressed', on);
+    qFsEl.title = on ? 'Exit full screen' : 'Full screen';
   }
-  fsEl.addEventListener('click', function () {
+  function toggleFullscreen() {
     if (isFullscreen()) {
       (document.exitFullscreen || document.webkitExitFullscreen).call(document);
     } else {
       var el = document.documentElement;
       (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
     }
+  }
+  fsEl.addEventListener('click', function () {
+    toggleFullscreen();
+    setMenuOpen(false);
+  });
+  qFsEl.addEventListener('click', function () {
+    toggleFullscreen();
     setMenuOpen(false);
   });
   document.addEventListener('fullscreenchange', updateFsItem);
@@ -154,12 +206,22 @@
   function updateMuteItem() {
     muteEl.querySelector('.state').textContent = muted ? 'Off' : 'On';
     muteEl.setAttribute('aria-checked', !muted);
+    qMuteEl.classList.toggle('on', !muted);
+    qMuteEl.setAttribute('aria-pressed', !muted);
+    qMuteEl.title = muted ? 'Sound off' : 'Sound on';
   }
-  muteEl.addEventListener('click', function () {
+  function toggleMute() {
     muted = !muted;
     try { localStorage.setItem('skyroads.muted', muted ? '1' : '0'); } catch (e) {}
     applyMute();
     updateMuteItem();
+  }
+  muteEl.addEventListener('click', function () {
+    toggleMute();
+    setMenuOpen(false);
+  });
+  qMuteEl.addEventListener('click', function () {
+    toggleMute();
     setMenuOpen(false);
   });
   updateFsItem();
@@ -181,6 +243,63 @@
     Module.skyGhostSetMultiplayer(!Module.skyGhostMultiplayer());
     updateMultiItem();
     setMenuOpen(false);
+  });
+
+  // Your multiplayer name: the relay's random two words, or one you choose.
+  var nameItemEl = document.getElementById('name-item');
+  var nameFormEl = document.getElementById('name-form');
+  var nameInputEl = document.getElementById('name-input');
+  var nameMsgEl = document.getElementById('name-msg');
+  var NAME_RULES = '3\u201320 letters, numbers or dashes; starts and ends with a letter or number, ' +
+                   'no double dashes. Empty: a random name.';
+  function updateNameItem() {
+    var available = typeof Module.skyGhostName === 'function';
+    nameItemEl.hidden = !available || !nameFormEl.hidden;
+    if (!available) return;
+    var n = Module.skyGhostName();
+    nameItemEl.querySelector('.state').textContent = n || 'random';
+    nameItemEl.title = n || '';
+  }
+  window.skyNameChanged = updateNameItem;
+  function nameMessage(text, error) {
+    nameMsgEl.textContent = text;
+    nameMsgEl.classList.toggle('error', !!error);
+  }
+  function closeNameForm() {
+    if (nameFormEl.hidden) return;
+    nameFormEl.hidden = true;
+    updateNameItem();
+  }
+  nameItemEl.addEventListener('click', function () {
+    nameFormEl.hidden = false;
+    nameItemEl.hidden = true;
+    nameInputEl.value = Module.skyGhostChosenName() || Module.skyGhostName() || '';
+    nameMessage(NAME_RULES, false);
+    nameInputEl.focus();
+    nameInputEl.select();
+  });
+  nameInputEl.addEventListener('keydown', function (e) {
+    e.stopPropagation();                // typing is not game input
+    if (e.key === 'Escape') { e.preventDefault(); setMenuOpen(false); }
+  });
+  nameInputEl.addEventListener('keyup', function (e) { e.stopPropagation(); });
+  nameInputEl.addEventListener('keypress', function (e) { e.stopPropagation(); });
+  nameInputEl.addEventListener('input', function () {
+    var v = nameInputEl.value.trim();
+    if (Module.skyGhostNameValid(v)) nameMessage(NAME_RULES, false);
+    else nameMessage(NAME_RULES, true);
+  });
+  nameFormEl.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = nameInputEl.value.trim();
+    if (!Module.skyGhostNameValid(v)) { nameMessage(NAME_RULES, true); return; }
+    nameMessage('Saving\u2026', false);
+    Module.skyGhostSetName(v, function (err) {
+      if (!err) { setMenuOpen(false); return; }
+      nameMessage(err === 'taken' ? 'Someone online already uses that name.' :
+                  err === 'offline' ? 'Could not reach the server; try again.' : NAME_RULES, true);
+      nameInputEl.focus();
+    });
   });
 
   var Module = {

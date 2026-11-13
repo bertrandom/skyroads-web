@@ -25,7 +25,14 @@ Protocol (one WebSocket per player):
                                            never sent back to it
     binary 0x01 + k * 12-byte frames       frames of the current run
     text   {"t":"end"}                     the current run ended
+    text   {"t":"hello","player":P,"name":N}
+                                           sent on connecting: your anonymous
+                                           id and (optional) chosen name
+    text   {"t":"name","name":N}           change your name ("" = random one)
   server -> client
+    text   {"t":"you","name":N,"error":E}  your name now; E ("invalid" or
+                                           "taken") if a requested name was
+                                           refused
     text   {"t":"run","id":I,"sub":S,"color":C}
                                            run I (another player) follows; C
                                            (0..COLORS-1) is the ghost's tint:
@@ -41,7 +48,10 @@ Protocol (one WebSocket per player):
                                            changes; an empty list once you
                                            have left the road
 Every player gets a name of two harmless words ("plucky-otter") derived from
-their anonymous id, so names are stable and nobody can choose one.
+their anonymous id, so it is stable across reloads.  Players can choose their
+own name instead: 3-20 letters, digits and single dashes, starting and ending
+with a letter or digit, not already used by another player online (ignoring
+case).
   frame = u16 t, u16 x, u16 y, i16 sprite, u32 z  (little endian; t = ticks
           since the start of the run, z = road position in 16.16 rows)
 """
@@ -52,6 +62,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import struct
 import time
 
@@ -115,6 +126,20 @@ runs = {}                           # id -> Run
 players = set()                     # connected Players
 
 
+# chosen names: 3-20 characters, letters/digits in groups joined by single
+# dashes (so no dash at either end, no double dashes)
+NAME_RE = re.compile(r"(?=.{3,20}\Z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\Z")
+
+
+def valid_name(name):
+    return isinstance(name, str) and NAME_RE.match(name) is not None
+
+
+def name_taken(name, me):
+    low = name.lower()
+    return any(p.key != me.key and p.name.lower() == low for p in players)
+
+
 def name_for(key):
     h = hashlib.sha1(key.encode()).digest()
     return "%s-%s" % (ADJECTIVES[int.from_bytes(h[0:2], "big") % len(ADJECTIVES)],
@@ -151,6 +176,7 @@ class Player:
         self.sending = asyncio.Lock()
         self.anon = os.urandom(16).hex()    # until the page sends its id
         self.pid = None
+        self.custom = None                  # chosen name, else name_for(key)
         self.road = None                    # road of the current/last run
         self.racing = False
         self.ended_at = float("-inf")
@@ -183,7 +209,7 @@ class Player:
 
     @property
     def name(self):
-        return name_for(self.key)
+        return self.custom or name_for(self.key)
 
     def on_road(self, road, now):
         return self.road == road and (self.racing or now - self.ended_at < GRACE)
@@ -208,6 +234,27 @@ class Player:
             self.colors[k] = c
             used.add(c)
         return {k: self.colors[k] for k in keys}
+
+    async def set_name(self, name, quiet_errors=False):
+        """Choose a name ("" = back to the random one) and tell the player
+        what their name is now."""
+        error = None
+        if not isinstance(name, str):
+            error = "invalid"
+        elif name == "":
+            self.custom = None
+        elif not valid_name(name):
+            error = "invalid"
+        elif name_taken(name, self):
+            error = "taken"
+        else:
+            self.custom = name
+        reply = {"t": "you", "name": self.name}
+        if error and not quiet_errors:
+            reply["error"] = error
+        await self.send_text(reply)
+        if not error and self.road is not None:
+            await broadcast(self.road)
 
     async def send_roster(self):
         now = time.monotonic()
@@ -374,6 +421,14 @@ class Player:
                         await self.start(road, sub, ago / 1000.0, player)
                 elif msg.get("t") == "end":
                     await self.end()
+                elif msg.get("t") == "hello":
+                    player = msg.get("player")
+                    if (isinstance(player, str) and 0 < len(player) <= 64
+                            and player.isascii() and player.isalnum()):
+                        self.pid = player
+                    await self.set_name(msg.get("name") or "", quiet_errors=True)
+                elif msg.get("t") == "name":
+                    await self.set_name(msg.get("name") or "")
 
 
 async def handshake(reader, writer):
