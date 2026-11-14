@@ -34,7 +34,8 @@ Protocol (one WebSocket per player):
     text   {"t":"hello","player":P,"name":N}
                                            sent on connecting: your anonymous
                                            id and (optional) chosen name
-    text   {"t":"name","name":N}           change your name ("" = random one)
+    text   {"t":"name","name":N}           change your name ("" = random one;
+                                           signed in only)
     text   {"t":"completed","road":N}      you finished road N (the run you
                                            started last)
     text   {"t":"stats"}                   ask for the statistics
@@ -80,9 +81,9 @@ Protocol (one WebSocket per player):
     text   {"t":"online","count":N}        players connected to the relay (one
                                            per browser), sent on hello and
                                            when it changes
-    text   {"t":"you","name":N,"error":E}  your name now; E ("invalid" or
-                                           "taken") if a requested name was
-                                           refused
+    text   {"t":"you","name":N,"error":E}  your name now; E ("invalid",
+                                           "taken" or "account": not signed
+                                           in) if a requested name was refused
     text   {"t":"run","id":I,"sub":S,"color":C}
                                            run I (another player) follows; C
                                            (0..COLORS-1) is the ghost's tint:
@@ -114,10 +115,11 @@ settings and road completions (highest count per road) in sync across the
 browsers signed in to it.
 
 Every player gets a name of two harmless words ("plucky-otter") derived from
-their anonymous id, so it is stable across reloads.  Players can choose their
-own name instead: 3-20 letters, digits and single dashes, starting and ending
-with a letter or digit, not already used by another player online (ignoring
-case).
+their anonymous id, so it is stable across reloads.  Players with an account
+can choose their own name instead: 3-20 letters, digits and single dashes,
+starting and ending with a letter or digit, belonging to no other account and
+used by no other player online (ignoring case).  A name chosen before signing
+up (kept by the page) is taken over by the new account if it is still free.
   frame = u16 t, u16 x, u16 y, i16 sprite, u32 z  (little endian; t = ticks
           since the start of the run, z = road position in 16.16 rows)
 """
@@ -214,8 +216,11 @@ def valid_name(name):
 
 
 def name_taken(name, me):
+    """Used by another player online, or another account's name."""
     low = name.lower()
-    return any(p.key != me.key and p.name.lower() == low for p in players)
+    if any(p.key != me.key and p.name.lower() == low for p in players):
+        return True
+    return bool(stats and stats.name_owner(name) not in (None, me.account))
 
 
 def name_for(key):
@@ -399,6 +404,14 @@ class Stats:
             # records set before the history was kept
             self.db.execute("INSERT INTO record_history (road, seconds, player, name, at) "
                             "SELECT road, seconds, player, name, at FROM best_times ORDER BY at")
+        # one account per name (ignoring case): where accounts from before
+        # this rule share one, the oldest keeps it and the others lose theirs
+        self.db.execute("UPDATE accounts SET name = NULL WHERE name IS NOT NULL AND EXISTS ("
+                        "SELECT 1 FROM accounts a WHERE a.name = accounts.name COLLATE NOCASE "
+                        "AND (a.created < accounts.created OR "
+                        "(a.created = accounts.created AND a.id < accounts.id)))")
+        self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accounts_name "
+                        "ON accounts (name COLLATE NOCASE)")
         self.db.commit()
 
     def seen(self, player):
@@ -536,6 +549,12 @@ class Stats:
                 self.db.execute("UPDATE accounts SET %s = ? WHERE id = ?" % column, (value, account))
         self.db.commit()
 
+    def name_owner(self, name):
+        """The account whose name this is (ignoring case), or None."""
+        row = self.db.execute("SELECT id FROM accounts WHERE name = ? COLLATE NOCASE",
+                              (name,)).fetchone()
+        return row[0] if row else None
+
     def renamed(self, player, name):
         self.db.execute("UPDATE best_times SET name = ? WHERE player = ?", (name, player))
         self.db.commit()
@@ -670,6 +689,7 @@ class Player:
         self.anon = os.urandom(16).hex()    # until the page sends its id
         self.pid = None
         self.custom = None                  # chosen name, else name_for(key)
+        self.wanted = ""                    # the name the page asked for at hello
         self.account = None                 # signed-in account id
         self.origin = origin                # page origin (for passkeys)
         self.challenge = None               # pending passkey prompt
@@ -747,17 +767,23 @@ class Player:
         if not isinstance(name, str):
             error = "invalid"
         elif name == "":
-            self.custom = None
+            pass
         elif not valid_name(name):
             error = "invalid"
+        elif not (stats and self.account):
+            error = "account"                   # chosen names belong to accounts
         elif name_taken(name, self):
             error = "taken"
-        else:
-            self.custom = name
+        if not error and stats and self.account:
+            try:
+                stats.save_account(self.account, name=name or None)
+            except sqlite3.IntegrityError:      # another account just took it
+                error = "taken"
+        if not error:
+            self.custom = name or None
         if not error and stats and self.ident:
             stats.renamed(self.ident, self.name)  # fastest times show the new name
         if not error and stats and self.account:
-            stats.save_account(self.account, name=self.custom)
             for p in list(players):             # the account's other browsers
                 if p is not self and p.account == self.account:
                     p.custom = self.custom
@@ -788,7 +814,8 @@ class Player:
         stats.link(self.pid, account)
         self.account = account
         data = stats.account_data(account) or {}
-        name = data.get("name") or self.custom or ""
+        # the account's name, else the one this browser chose before (if free)
+        name = data.get("name") or self.custom or self.wanted or ""
         await self.set_name(name, quiet_errors=True)   # the name first: the page
         await self.send_account()                       # shows it with the state
         await broadcast_online()
@@ -877,7 +904,9 @@ class Player:
         if stats and self.account and self.pid:
             stats.unlink(self.pid)
         self.account = None
+        self.custom = None                      # the name stays with the account
         await self.send_account()
+        await self.send_text({"t": "you", "name": self.name, "custom": False})
 
     async def sync(self, msg):
         """Merge this browser's settings and road completions into the
@@ -1103,11 +1132,12 @@ class Player:
                                 stats.seen(player)
                     self.greeted = True
                     name = msg.get("name") or ""
+                    self.custom = None
+                    self.wanted = name if valid_name(name) else ""
                     if self.account:            # the account's name wins
                         data = stats.account_data(self.account) or {}
                         name = data.get("name") or name
-                        if name and not data.get("name") and valid_name(name):
-                            stats.save_account(self.account, name=name)
+                    # (refused, quietly, if not signed in: a random name then)
                     await self.set_name(name, quiet_errors=True)
                     await self.send_account()
                     await broadcast_online(also=self)

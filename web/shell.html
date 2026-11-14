@@ -766,8 +766,8 @@
     if (!a || !a.available) {
       intro.textContent = 'Accounts need a connection to the multiplayer server.';
     } else if (!a.signedIn) {
-      intro.textContent = 'Sign in with a passkey to keep your name, road progress, settings and ' +
-                          'statistics in sync across your browsers.';
+      intro.textContent = 'Sign in with a passkey to choose your own name, and to keep your road ' +
+                          'progress, settings and statistics in sync across your browsers.';
       actions.appendChild(accountButton('Sign in with a passkey', true, function () {
         passkey('login', 'Waiting for your passkey\u2026', 'Signed in.');
       }));
@@ -789,14 +789,17 @@
   }
   window.skyAccountChanged = function () {
     updateAccountItem();
+    updateNameItem();
+    if (!signedIn()) closeNameForm();
     if (accountEl.open) renderAccount();
   };
-  accountItemEl.addEventListener('click', function () {
+  function openAccount(message) {
     setMenuOpen(false);
-    accountMessage('');
+    accountMessage(message || '');
     renderAccount();
     accountEl.showModal();
-  });
+  }
+  accountItemEl.addEventListener('click', function () { openAccount(); });
   accountEl.querySelector('.close').addEventListener('click', function () { accountEl.close(); });
   accountEl.addEventListener('click', function (e) { if (e.target === accountEl) accountEl.close(); });
   accountEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
@@ -839,7 +842,8 @@
   congratsEl.addEventListener('keyup', function (e) { e.stopPropagation(); });
   congratsEl.addEventListener('close', function () { canvas.focus(); });
 
-  // Your multiplayer name: the relay's random two words, or one you choose.
+  // Your multiplayer name: the relay's random two words, or one you choose
+  // (signed in only: a chosen name belongs to your account).
   var nameItemEl = document.getElementById('name-item');
   var nameFormEl = document.getElementById('name-form');
   var nameInputEl = document.getElementById('name-input');
@@ -853,8 +857,9 @@
     if (!available) return;
     var n = Module.skyGhostName();
     nameItemEl.querySelector('.state').textContent = n || 'random';
-    nameItemEl.title = n || '';
+    nameItemEl.title = signedIn() ? (n || '') : 'Sign in to choose your own name';
   }
+  function signedIn() { var a = accountState(); return !!(a && a.signedIn); }
   window.skyNameChanged = function () {
     updateNameItem();
     if (accountEl.open) renderAccount();             // "Signed in as <name>"
@@ -869,6 +874,11 @@
     updateNameItem();
   }
   nameItemEl.addEventListener('click', function () {
+    var a = accountState();
+    if (!signedIn()) {
+      if (a && a.available) openAccount('Create an account or sign in to choose your own name.');
+      return;
+    }
     nameFormEl.hidden = false;
     nameItemEl.hidden = true;
     nameInputEl.value = Module.skyGhostChosenName() || Module.skyGhostName() || '';
@@ -894,7 +904,8 @@
     nameMessage('Saving\u2026', false);
     Module.skyGhostSetName(v, function (err) {
       if (!err) { setMenuOpen(false); return; }
-      nameMessage(err === 'taken' ? 'Someone online already uses that name.' :
+      nameMessage(err === 'taken' ? 'That name is already taken.' :
+                  err === 'account' ? 'Sign in to choose your own name.' :
                   err === 'offline' ? 'Could not reach the server; try again.' : NAME_RULES, true);
       nameInputEl.focus();
     });

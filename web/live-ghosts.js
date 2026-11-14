@@ -201,8 +201,9 @@
   }
   Module.skyGhostOnline = function () { return online; };
 
-  /* your name: random two words from the relay unless you chose one
-   * (kept in localStorage, checked again by the relay) */
+  /* your name: random two words from the relay unless your account has
+   * one you chose (kept in localStorage too: a name chosen before signing up
+   * is offered to the new account) */
   var myName = null, nameReply = null;
   var NAME_RE = /^(?=.{3,20}$)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/;
   function storedName() {
@@ -211,18 +212,14 @@
   function storeName(n) {
     try { if (n) localStorage.setItem('skyroads.name', n); else localStorage.removeItem('skyroads.name'); } catch (e) {}
   }
-  Module.skyGhostName = function () { return myName || storedName() || null; };
+  Module.skyGhostName = function () { return myName || null; };
   Module.skyGhostChosenName = storedName;
   Module.skyGhostNameValid = function (n) { return n === '' || NAME_RE.test(n); };
-  /* cb(error): null, 'invalid', 'taken' or 'offline' */
+  /* cb(error): null, 'invalid', 'taken', 'account' (not signed in) or 'offline' */
   Module.skyGhostSetName = function (n, cb) {
     if (!Module.skyGhostNameValid(n)) { cb('invalid'); return; }
-    if (!open()) {                      // single player / offline: used when connecting
-      storeName(n);
-      if (n) myName = n; else myName = null;
-      cb(null);
-      return;
-    }
+    if (!open()) { cb('offline'); return; }
+    if (!account.signedIn) { cb('account'); return; }
     var timer = setTimeout(function () { nameReply = null; cb('offline'); }, 5000);
     nameReply = function (err) {
       clearTimeout(timer);
@@ -265,6 +262,7 @@
     if (signingOut && !account.signedIn) {
       // start over as a new anonymous player, on the same connection
       signingOut = false;
+      storeName('');                    // the name stays with the account
       try { localStorage.removeItem('skyroads.player'); } catch (e) {}
       player = playerId();
       if (open()) ws.send(JSON.stringify({ t: 'hello', player: player, name: storedName() }));
