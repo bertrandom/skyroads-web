@@ -79,10 +79,17 @@ $(OUT)/index.html: $(OBJS) $(BUILD)/data shell.html
 	$(EMCC) $(OBJS) $(LDFLAGS) -o $@
 	cp coi-serviceworker.js $(OUT)/ 2>/dev/null || true
 
-# the About dialog's text, written in about.md
-$(OUT)/about.html: about.md gen_about.py pyproject.toml
+# the About dialog's text, written in about.md, with the git revision built
+# (short hash, "-dirty" with uncommitted changes) in its lower right corner
+REV := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(shell git diff --quiet HEAD -- .. 2>/dev/null || echo -dirty)
+$(BUILD)/rev.txt: FORCE
+	@mkdir -p $(BUILD)
+	@echo '$(REV)' | cmp -s - $@ || echo '$(REV)' > $@
+FORCE:
+
+$(OUT)/about.html: about.md gen_about.py pyproject.toml $(BUILD)/rev.txt
 	mkdir -p $(OUT)
-	uv run --quiet gen_about.py about.md $@
+	uv run --quiet gen_about.py about.md $@ "$$(cat $(BUILD)/rev.txt)"
 
 $(OUT)/live-ghosts.js: live-ghosts.js
 	mkdir -p $(OUT)

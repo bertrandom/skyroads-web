@@ -131,6 +131,8 @@
   #about .body a { color: #6cf; }
   #about .body code { font: 12px ui-monospace, Menlo, Consolas, monospace; background: #1c2d44;
                       padding: 1px 4px; border-radius: 3px; }
+  #about > .rev { margin: 0; padding: 0 12px 8px; text-align: right; color: #6a7f9c;
+                  font: 11px ui-monospace, Menlo, Consolas, monospace; }
   #about .body hr { border: 0; border-top: 1px solid #2a3f5c; margin: 14px 0; }
   /* account (passkeys) */
   #account { width: min(400px, calc(100vw - 32px)); padding: 0; background: #0b1524; color: #cde;
@@ -708,6 +710,8 @@
         return r.text();
       }).then(function (text) {
         aboutBodyEl.innerHTML = text;   // generated from about.md, escaped by gen_about.py
+        var rev = aboutBodyEl.querySelector('.rev');
+        if (rev) aboutEl.appendChild(rev);   // the build's revision, lower right
         aboutLoaded = true;
       }, function () {
         aboutBodyEl.innerHTML = '<p>Could not load the About text.</p>';
