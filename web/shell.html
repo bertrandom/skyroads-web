@@ -527,9 +527,16 @@
   }
   // with the sound off, stop the page's audio output too, so the browser
   // (tab speaker icon, iOS now-playing) no longer counts the page as playing
+  // The music plays on silently (sky_audio_mute keeps the chip up to date)
+  // and continues where it is when the sound comes back on.
+  var outMuted = false;
   function applyMute() {
     var ac = audioContext();
     if (!ac) return;
+    if (muted !== outMuted && typeof Module._sky_audio_mute === 'function') {
+      outMuted = muted;
+      Module._sky_audio_mute(muted ? 1 : 0);
+    }
     if (muted && ac.state === 'running') ac.suspend();
     else if (!muted && ac.state === 'suspended' && primed === ac) ac.resume();
   }
