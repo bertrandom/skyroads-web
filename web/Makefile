@@ -20,7 +20,7 @@ GHOST_RELAY ?=
 GHOST_KEY ?=
 
 SRCS := main.c runtime.c video.c platform.c hw.c audio.c manual.c render.c game.c ghost.c sign.c
-OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
+OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o)) $(BUILD)/opl3.o
 
 CFLAGS := -O2 -std=gnu11 -I$(PORT) -I$(BUILD) -pthread -sUSE_SDL=2 \
           -fno-strict-aliasing -fwrapv -w -Wno-int-conversion \
@@ -59,6 +59,10 @@ $(BUILD)/%.o: $(PORT)/%.c $(PORT)/compat.h $(PORT)/protos.h $(PORT)/image_data.h
 
 $(BUILD):
 	mkdir -p $(BUILD)
+
+# Nuked-OPL3 (LGPL-2.1), the AdLib chip emulator
+$(BUILD)/opl3.o: $(PORT)/thirdparty/nuked-opl3/opl3.c $(PORT)/thirdparty/nuked-opl3/opl3.h | $(BUILD)
+	$(EMCC) $(CFLAGS) -c $< -o $@
 
 # the relay key for sign.c (rewritten only when GHOST_KEY changes)
 $(BUILD)/relay_key.h: FORCE | $(BUILD)
