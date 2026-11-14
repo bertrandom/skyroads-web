@@ -53,6 +53,9 @@ $(OUT)/manifest.webmanifest: manifest.webmanifest
 # generated sources come from the native port's pipeline
 $(PORT)/game.c $(PORT)/protos.h $(PORT)/image_data.h:
 	$(MAKE) -C $(PORT) game.c image_data.h
+$(PORT)/wide_bg.h: FORCE
+	$(MAKE) -C $(PORT) wide_bg.h
+$(BUILD)/platform.o: $(PORT)/wide_bg.h
 
 $(BUILD)/%.o: $(PORT)/%.c $(PORT)/compat.h $(PORT)/protos.h $(PORT)/image_data.h | $(BUILD)
 	$(EMCC) $(CFLAGS) -c $< -o $@
