@@ -77,7 +77,11 @@ Protocol (one WebSocket per player):
                                            null x 30] (fastest finish)}, Y the
                                            same for you (without players;
                                            best: [[seconds, at] or null x 30]);
-                                           at = Unix time the time was set
+                                           at = Unix time the time was set;
+                                           a run counts as an attempt (and
+                                           its time as play time) only once
+                                           the ship has moved: a row forward,
+                                           sideways or up (Run.check_moved)
     text   {"t":"online","count":N}        players connected to the relay (one
                                            per browser), sent on hello and
                                            when it changes
@@ -148,6 +152,7 @@ except ImportError:
 
 GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 FRAME = 12
+MOVE_XY = 0x100         # sideways / height change that counts as moving
 WINDOW = 300            # seconds: runs started this long before you are shown
 KEEP = WINDOW + 60      # seconds a run is kept after it started
 MAX_FRAMES = 60000      # per run (~25 min of play)
@@ -200,6 +205,23 @@ class Run:
         self.frames = bytearray()
         self.ended = False
         self.watchers = set()       # players this run was announced to
+        self.moved = False          # the ship has left where it started
+        self.origin = None          # (x, y, z) of the first frame
+
+    def check_moved(self, data):
+        """Look at new frames: True once the ship has moved (a row forward,
+        sideways or up, as in a jump) from where the run began.  A run that
+        never moves is not counted, as an attempt or as play time."""
+        for i in range(0, len(data) - FRAME + 1, FRAME):
+            _t, x, y, _spr, z = struct.unpack_from("<HHHhI", data, i)
+            if self.origin is None:
+                self.origin = (x, y, z)
+                continue
+            x0, y0, z0 = self.origin
+            if z >= z0 + 0x10000 or abs(x - x0) > MOVE_XY or abs(y - y0) > MOVE_XY:
+                self.moved = True
+                return True
+        return False
 
 
 runs = {}                           # id -> Run
@@ -695,6 +717,7 @@ class Player:
         self.challenge = None               # pending passkey prompt
         self.greeted = False                # sent hello (counted as online)
         self.finishable = False             # last run may still be completed
+        self.attempt = False                # current run not counted yet
         self.finish = None                  # (road, seconds) of the last run
         self.nonce = None                   # to check the end's signature
         self.road = None                    # road of the current/last run
@@ -1016,12 +1039,12 @@ class Player:
         self.run = Run(self, road, min(max(ago, 0.0), WINDOW))
         self.run_began = time.monotonic() - max(ago, 0.0)   # for the time check
         self.nonce = None
+        self.attempt = False            # counted once the ship moves (frames)
         if ago < 1.0:                   # not a run resent after a reconnect
             self.finishable = True      # one completion may be reported
             self.nonce = secrets.randbits(32)
             await self.send_text({"t": "nonce", "n": self.nonce, "sub": sub})
-            if stats and self.ident and road < ROADS_IN_GAME:
-                stats.count(self.ident, road, "attempts")
+            self.attempt = bool(stats and self.ident and road < ROADS_IN_GAME)
         runs[self.run.id] = self.run
         now = self.run.started
         listed = roster(road, time.monotonic())
@@ -1061,6 +1084,9 @@ class Player:
         if not data:
             return
         r.frames += data
+        if not r.moved and r.check_moved(data) and self.attempt:
+            self.attempt = False        # the run counts from here
+            stats.count(self.ident, r.road, "attempts")
         msg = struct.pack("<I", r.id) + data
         for w in list(r.watchers):
             if not await w.notify(0x2, msg):
@@ -1108,6 +1134,7 @@ class Player:
                     r, self.finish = self.run, None
                     ticks, finish = msg.get("ticks"), msg.get("finish")
                     if (stats and self.ident and r and not r.ended and r.road < ROADS_IN_GAME
+                            and r.moved     # (a run that never moved does not count)
                             and isinstance(ticks, int) and isinstance(finish, int)):
                         play, finished, problem = check_run(r, ticks, finish, self.nonce,
                                                             msg.get("sig"))
