@@ -34,7 +34,9 @@
   var COLORS = ['#50e6ff', '#ff69c8', '#ffeb50', '#6eff78', '#ff9b32', '#af82ff', '#ff5050', '#f5f5f5'];
   var listEl = document.getElementById('players');
 
-  /* the players on your road: [{name, color, you}], you first */
+  /* the players on your road: [{name, color, you}], you first, then the
+   * recorded runs filling in when few are racing: {name, color, replay:
+   * "record" / "best" / "run", seconds: finish time if finished} */
   function showPlayers(list) {
     if (!listEl) return;
     listEl.textContent = '';
@@ -49,7 +51,14 @@
         dot.style.background = COLORS[(p.color | 0) % COLORS.length];
       }
       li.appendChild(dot);
-      li.appendChild(document.createTextNode(String(p.name) + (p.you ? ' (you)' : '')));
+      var text = String(p.name) + (p.you ? ' (you)' : '');
+      if (p.replay) {
+        var secs = typeof p.seconds === 'number' ? ' ' + p.seconds.toFixed(2) + ' s' : '';
+        li.className = 'replay';
+        text = p.replay === 'best' ? 'your best' + (secs || ' run')
+             : String(p.name) + (p.replay === 'record' ? ' \u00b7 record' + secs : ' \u00b7 replay');
+      }
+      li.appendChild(document.createTextNode(text));
       listEl.appendChild(li);
     });
     shownList = list && list.length ? list : null;

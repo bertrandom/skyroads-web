@@ -21,6 +21,15 @@ Players stay listed for 15 s after a run (`GRACE`), long enough for the game
 to restart the road after a crash. The settings menu also shows how many
 players are connected to the relay in total (one per browser).
 
+When fewer than four players are on a road, the relay fills the places left
+with recorded runs, so there are always ghosts: the road's record run, your
+own best run (fastest finish, else the one that got furthest) and other
+players' runs at random, one per player. They are kept in `ghosts.db` next
+to `relay.py` (`--ghosts-db PATH`, `""` for none): every run whose ship moved,
+finished or not, if it is plausible (starts at the start, never beats the
+top speed), zlib-compressed (a few KB a run). The list of players marks them
+(record and its time, your best, replay).
+
 The relay also keeps all-time statistics in SQLite (`stats.db` next to
 `relay.py`, or `--db PATH`; `--db ""` turns them off): every player id it has
 seen, per player and road the number of races started, roads finished

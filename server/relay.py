@@ -101,7 +101,18 @@ Protocol (one WebSocket per player):
                                            who is on your road right now (you
                                            first, colour null), sent when it
                                            changes; an empty list once you
-                                           have left the road
+                                           have left the road.  Then the
+                                           recorded runs shown with them:
+                                           {"name":N,"color":C,"replay":K,
+                                           "seconds":S} (K "record", "best"
+                                           (yours) or "run"; S if finished)
+
+Replays: with fewer than GHOSTS_SHOWN live players on a road, the places
+left are filled from ghosts.db, which keeps every run that moved (finished
+or not, if plausible): the road's record run, your best run (fastest
+finish, else furthest), then other players' runs at random, one per player.
+They arrive as runs like the live ones (ids from REPLAY_ID up), complete and
+already ended.
 Statistics only count a finished road when the run checks out: its frames
 start at the start line, the clock never runs backwards, the ship never moves
 faster than the game's top speed, it reaches the end of the road (half a row
@@ -140,6 +151,8 @@ import re
 import sqlite3
 import struct
 import time
+import random
+import zlib
 from urllib.parse import urlsplit
 
 try:                                # passkeys need python3-cryptography
@@ -206,6 +219,7 @@ class Run:
         self.ended = False
         self.watchers = set()       # players this run was announced to
         self.moved = False          # the ship has left where it started
+        self.fresh = ago < 1.0      # not resent after a reconnect (stored once)
         self.origin = None          # (x, y, z) of the first frame
 
     def check_moved(self, data):
@@ -616,6 +630,78 @@ class Stats:
 stats = None                        # Stats, unless --db ""
 
 
+class Ghosts:
+    """Every run that moved, kept as a replay ghost (ghosts.db, apart from
+    the statistics: it only grows and can be dropped).  When a road has few
+    live players, the empty places are filled with its record run, your best
+    run and other recorded runs, so there are always ghosts."""
+
+    def __init__(self, path):
+        self.db = sqlite3.connect(path)
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS runs (
+                id       INTEGER PRIMARY KEY,
+                player   TEXT    NOT NULL,      -- Player.key
+                name     TEXT    NOT NULL,      -- the player's name at the time
+                road     INTEGER NOT NULL,
+                started  INTEGER NOT NULL,      -- Unix time
+                ticks    INTEGER NOT NULL,      -- run length (36 a second)
+                distance INTEGER NOT NULL,      -- furthest z (16.16 rows)
+                finish   REAL,                  -- checked finish time, s
+                frames   BLOB    NOT NULL);     -- zlib of the 12-byte frames
+            CREATE INDEX IF NOT EXISTS runs_road_finish ON runs (road, finish);
+            CREATE INDEX IF NOT EXISTS runs_road_player ON runs (road, player);
+        """)
+        self.db.commit()
+
+    def store(self, run, name, finish):
+        data = bytes(run.frames)
+        n = len(data) // FRAME
+        if not n or not plausible(data, run.road):
+            return
+        last_t = struct.unpack_from("<H", data, (n - 1) * FRAME)[0]
+        distance = max(struct.unpack_from("<I", data, i * FRAME + 8)[0] for i in range(n))
+        self.db.execute(
+            "INSERT INTO runs (player, name, road, started, ticks, distance, finish, frames) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (run.key, name, run.road, int(time.time() - (time.monotonic() - run.started)),
+             last_t, distance, finish, zlib.compress(data, 6)))
+        self.db.commit()
+
+    def pick(self, road, you, exclude, count):
+        """Up to `count` recorded runs of `road` for player `you`, one per
+        player and none of `exclude`: the record run, your best (fastest
+        finish, else furthest run), then other runs at random.
+        Returns [(id, kind, name, finish seconds or None)]."""
+        chosen, players = [], set(exclude)
+        def take(row, kind):
+            if row and row[1] not in players and len(chosen) < count:
+                players.add(row[1])
+                chosen.append((row[0], kind, row[2], row[3]))
+        take(self.db.execute("SELECT id, player, name, finish FROM runs WHERE road = ? "
+                             "AND finish IS NOT NULL ORDER BY finish, id LIMIT 1",
+                             (road,)).fetchone(), "record")
+        if you not in players:
+            take(self.db.execute("SELECT id, player, name, finish FROM runs "
+                                 "WHERE road = ? AND player = ? "
+                                 "ORDER BY finish IS NULL, finish, distance DESC, id LIMIT 1",
+                                 (road, you)).fetchone(), "best")
+        players.add(you)                # (the rest are other players' runs)
+        for row in self.db.execute("SELECT id, player, name, finish FROM runs WHERE road = ? "
+                                   "ORDER BY RANDOM() LIMIT 200", (road,)):
+            take(row, "run")
+        return chosen
+
+    def frames(self, run_id):
+        row = self.db.execute("SELECT frames FROM runs WHERE id = ?", (run_id,)).fetchone()
+        return zlib.decompress(row[0]) if row else b""
+
+
+ghosts = None                       # Ghosts, unless --ghosts-db ""
+REPLAY_ID = 1 << 31                 # replay run ids: REPLAY_ID + runs.id
+GHOSTS_SHOWN = 4                    # live players and replays filling up to it
+
+
 def account_key(account):
     """A signed-in player's identity (key and statistics id)."""
     return "acct" + account
@@ -630,6 +716,25 @@ ROAD_LENGTHS = [55, 115, 60, 94, 126, 48, 60, 106, 70, 81,
 TICKS = 36                          # game clock ticks per second
 TOP_SPEED = 0x2AAA                  # rows (16.16) per tick, the game's cap
 START_Z = 3 << 16                   # every run starts 3 rows in
+
+
+def plausible(data, road):
+    """A recorded run fit to be shown to everyone: it starts at the start,
+    its clock never runs backwards and the ship never beats the top speed
+    (up to the finish line: the finish animation after it is not checked)."""
+    line = ROAD_LENGTHS[road] * 65536 - 0x8000
+    prev_t = prev_z = None
+    for i in range(len(data) // FRAME):
+        t, _x, _y, _spr, z = struct.unpack_from("<HHHhI", data, i * FRAME)
+        if prev_t is None:
+            if t > TICKS or abs(z - START_Z) > 0x2000:
+                return False
+        elif t < prev_t:
+            return False
+        elif prev_z < line and z - prev_z > (t - prev_t) * TOP_SPEED + 0x400:
+            return False
+        prev_t, prev_z = t, z
+    return True
 
 
 def check_run(run, ticks, finish, nonce, sig):
@@ -727,6 +832,7 @@ class Player:
         self.colors = {}                    # key -> colour, for this viewer
         self.seen = {}                      # key -> order first seen
         self.ghosts = {}                    # key -> Run shown as a ghost
+        self.replays = {}                   # key -> (id, kind, name, finish): recorded
 
     @property
     def ghost_keys(self):
@@ -965,10 +1071,18 @@ class Player:
             return
         others = roster(self.road, now)
         others.pop(self.key, None)
-        colors = self.assign(set(others) | self.ghost_keys, pinned=self.ghost_keys)
+        shown = self.ghost_keys | set(self.replays)
+        colors = self.assign(set(others) | shown, pinned=shown)
         entries = [{"name": self.name, "color": None, "you": True}]
         entries += [{"name": n, "color": colors[k]}
                     for k, n in sorted(others.items(), key=lambda kv: kv[1])]
+        order = {"record": 0, "best": 1, "run": 2}
+        for k, (_rid, kind, name, finish) in sorted(self.replays.items(),
+                                                     key=lambda kv: order[kv[1][1]]):
+            entry = {"name": name, "color": colors[k], "replay": kind}
+            if finish is not None:
+                entry["seconds"] = round(finish, 2)
+            entries.append(entry)
         self.listed = self.road
         await self.notify(0x1, json.dumps({"t": "players", "list": entries},
                                           separators=(",", ":")).encode())
@@ -1060,7 +1174,13 @@ class Player:
                 latest.append(r)
         latest = latest[:MAX_RUNS_SENT]
         self.drop_ghosts()
-        colors = self.assign({r.key for r in latest} | set(listed))
+        self.replays = {}               # few live players: recorded runs too
+        if ghosts and road < ROADS_IN_GAME and len(latest) < GHOSTS_SHOWN:
+            busy = set(listed) | {r.key for r in latest}
+            for rid, kind, name, finish in ghosts.pick(road, self.key, busy,
+                                                       GHOSTS_SHOWN - len(latest)):
+                self.replays["replay:%d" % rid] = (REPLAY_ID + rid, kind, name, finish)
+        colors = self.assign({r.key for r in latest} | set(listed) | set(self.replays))
         self.ghosts = {r.key: r for r in latest}
         for r in latest:
             r.watchers.add(self)
@@ -1071,6 +1191,14 @@ class Player:
                 await self.send(0x2, head + bytes(r.frames[i:i + chunk]))
             if r.ended:
                 await self.send_text({"t": "end", "id": r.id})
+        chunk = (MAX_MESSAGE // FRAME) * FRAME
+        for key, (rid, _kind, _name, _finish) in self.replays.items():
+            data = ghosts.frames(rid - REPLAY_ID)
+            await self.send_text({"t": "run", "id": rid, "sub": sub, "color": colors[key]})
+            head = struct.pack("<I", rid)
+            for i in range(0, len(data), chunk):
+                await self.send(0x2, head + data[i:i + chunk])
+            await self.send_text({"t": "end", "id": rid})
         await broadcast(road)
         if previous is not None and previous != road:
             await broadcast(previous)
@@ -1092,7 +1220,8 @@ class Player:
             if not await w.notify(0x2, msg):
                 r.watchers.discard(w)
 
-    async def end(self, quietly=False):
+    async def end(self, quietly=False, finish=None):
+        """The current run is over (`finish`: its checked finish time)."""
         if self.racing:
             self.racing = False
             self.ended_at = time.monotonic()
@@ -1104,6 +1233,11 @@ class Player:
         if r is None or r.ended:
             return
         r.ended = True
+        if ghosts and r.moved and r.fresh and r.road < ROADS_IN_GAME:
+            try:
+                ghosts.store(r, self.name, finish)
+            except sqlite3.Error as e:
+                log.warning("could not store run: %s", e)
         msg = json.dumps({"t": "end", "id": r.id}).encode()
         for w in list(r.watchers):
             if not await w.notify(0x1, msg):
@@ -1147,7 +1281,8 @@ class Player:
                         elif finish:
                             log.info("finish on road %d not counted: %s", r.road,
                                      problem or "faster than real time")
-                    await self.end()
+                    done = self.finish[1] if self.finish and r and self.finish[0] == r.road else None
+                    await self.end(finish=done)
                 elif msg.get("t") == "hello":
                     player = msg.get("player")
                     if (isinstance(player, str) and 0 < len(player) <= 64
@@ -1265,6 +1400,9 @@ async def main():
     ap.add_argument("--origin", action="append",
                     help="page origin allowed to use passkeys (repeatable; default: %s)"
                          % ", ".join(ORIGINS))
+    ap.add_argument("--ghosts-db", default=os.path.join(here, "ghosts.db"),
+                    help="recorded runs, shown as ghosts when few players are on a road "
+                         "(\"\" for none)")
     ap.add_argument("--key-file", default=os.path.join(here, "relay.key"),
                     help="hex key the game signs run ends with (same as the "
                          "build's GHOST_KEY); without it signatures are not checked")
@@ -1276,7 +1414,10 @@ async def main():
         with open(args.key_file) as f:
             RELAY_KEY = bytes.fromhex(f.read().strip())
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    global stats
+    global stats, ghosts
+    if args.ghosts_db:
+        ghosts = Ghosts(args.ghosts_db)
+        log.info("replay ghosts in %s", args.ghosts_db)
     if args.db:
         stats = Stats(args.db)
         log.info("statistics in %s (%s)", args.db,
