@@ -38,14 +38,13 @@
   #settings .chip { position: static; }
   #bar { display: flex; gap: 6px; }
   #gear, .quick { cursor: pointer; font-size: 16px; line-height: 1; padding: 6px 8px; display: flex; }
-  #gear { opacity: .5; }
+  #gear, .quick { opacity: .5; }
   #gear svg { width: 18px; height: 18px; fill: currentColor; transition: transform .2s; }
-  /* sound / full screen toggles shown next to the gear while the menu is open */
-  .quick { display: none; }
-  #settings.open .quick { display: flex; }
+  /* sound / full screen toggles, always beside the gear */
   .quick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2;
                stroke-linecap: round; stroke-linejoin: round; }
-  .quick:hover, .quick:focus-visible { background: #234; }
+  .quick:hover, .quick:focus-visible { background: #234; opacity: 1; }
+  #settings.open .quick { opacity: 1; }
   .quick:not(.on) .i-on, .quick.on .i-off { display: none; }
   #gear:hover, #settings.open #gear { opacity: 1; }
   #settings.open #gear svg { transform: rotate(60deg); }
@@ -521,7 +520,7 @@
   }
   qFsEl.addEventListener('click', function () {
     toggleFullscreen();
-    setMenuOpen(false);
+    canvas.focus();             // keep Space/Enter going to the game, not the button
   });
   document.addEventListener('fullscreenchange', updateFsItem);
   document.addEventListener('webkitfullscreenchange', updateFsItem);
@@ -573,7 +572,7 @@
   }
   qMuteEl.addEventListener('click', function () {
     toggleMute();
-    setMenuOpen(false);
+    canvas.focus();             // (the menu stays as it is: its slider follows)
   });
   updateFsItem();
   updateMuteItem();
@@ -598,10 +597,10 @@
 
   // Widescreen: the game in the middle of a view as wide as the window (up to
   // ultrawide, 3440x1440), the road's backdrop painted out either side during
-  // a run.  Remembered in this browser.
+  // a run.  On by default; switching it off is remembered in this browser.
   var wideEl = document.getElementById('wide-item');
-  var wide = false;
-  try { wide = localStorage.getItem('skyroads.wide') === '1'; } catch (e) {}
+  var wide = true;                // on unless switched off in this browser
+  try { wide = localStorage.getItem('skyroads.wide') !== '0'; } catch (e) {}
   function updateWideItem() {
     wideEl.querySelector('.state').textContent = wide ? 'On' : 'Off';
     wideEl.setAttribute('aria-checked', wide);
