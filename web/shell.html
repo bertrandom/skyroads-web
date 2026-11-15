@@ -319,7 +319,7 @@
       <dt>↑&nbsp;↓</dt><dd>Speed</dd>
       <dt>Space</dt><dd>Jump</dd>
       <dt>Enter</dt><dd>Select</dd>
-      <dt>Esc&nbsp;`</dt><dd>Back</dd>
+      <dt id="esc-key">Esc</dt><dd>Back</dd>
       <dt>W</dt><dd>Widescreen</dd>
       <dt>S</dt><dd>Sound</dd>
       <dt>&minus;&nbsp;=</dt><dd>Volume</dd>
@@ -504,6 +504,8 @@
     qFsEl.classList.toggle('on', on);
     qFsEl.setAttribute('aria-pressed', on);
     qFsEl.title = on ? 'Exit full screen' : 'Full screen';
+    // in full screen the browser keeps Esc (it leaves full screen): ` is Esc
+    document.getElementById('esc-key').textContent = on ? '`' : 'Esc';
   }
   // iPhone Safari has no Fullscreen API for pages (Add to Home Screen opens
   // the game full screen instead, see manifest.webmanifest), so no icon there
