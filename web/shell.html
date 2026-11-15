@@ -20,7 +20,8 @@
                font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
   #wrap { position: absolute; inset: 0; display: flex; align-items: center;
           justify-content: center; }
-  /* 4:3, or 426:240 (16:9) in widescreen */
+  /* 4:3, or in widescreen the window's shape (--arw: the view's width in game
+     columns, set by applyWide, over 240 rows) */
   :root { --arw: 4; --arh: 3; }
   html.wide { --arw: 426; --arh: 240; }
   canvas { display: block; outline: none; image-rendering: pixelated;
@@ -75,7 +76,7 @@
   #players .dot { width: .75em; height: .75em; border-radius: 50%; flex: none;
                   box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
   #players .you { opacity: .75; }
-  /* wide windows: beside the game, left of its edge (see placePlayers) */
+  /* wide windows: beside the game, left of its 4:3 edge (see placePlayers) */
   #players.outside { left: auto; right: calc(100% + 12px); top: 12px;
                      font-size: 14px; background: rgba(10, 20, 35, .85); border: 1px solid #357; }
   /* statistics modal */
@@ -584,8 +585,9 @@
     setMenuOpen(false);
   });
 
-  // Widescreen (16:9): the game in the middle, the world's backdrop carried
-  // on either side during a run.  Remembered in this browser.
+  // Widescreen: the game in the middle of a view as wide as the window (up to
+  // ultrawide, 3440x1440), the road's backdrop painted out either side during
+  // a run.  Remembered in this browser.
   var wideEl = document.getElementById('wide-item');
   var wide = false;
   try { wide = localStorage.getItem('skyroads.wide') === '1'; } catch (e) {}
@@ -593,13 +595,27 @@
     wideEl.querySelector('.state').textContent = wide ? 'On' : 'Off';
     wideEl.setAttribute('aria-checked', wide);
   }
-  function applyWide() {
-    if (window.Module && typeof Module._plat_set_wide === 'function') Module._plat_set_wide(wide ? 1 : 0);
+  // the view's width in game columns (240 rows tall): the window's shape,
+  // from 4:3 up to the widest painted backdrop; 16:9 at most beside the pads
+  function viewWidth() {
+    var max = window.Module && typeof Module._plat_max_view_width === 'function'
+              ? Module._plat_max_view_width() : 573;
+    if (touchUI) max = Math.min(max, 426);
+    return Math.max(320, Math.min(max, Math.round(240 * window.innerWidth / window.innerHeight)));
   }
-  window.skyWideChanged = function (on) {
-    document.documentElement.classList.toggle('wide', !!on);
+  var viewW = 320;
+  function applyWide() {
+    viewW = wide ? viewWidth() : 320;
+    var root = document.documentElement;
+    root.classList.toggle('wide', wide);
+    root.style.setProperty('--arw', wide ? viewW : 4);
+    root.style.setProperty('--arh', wide ? 240 : 3);
+    if (window.Module && typeof Module._plat_set_wide === 'function') {
+      Module._plat_set_wide(wide ? 1 : 0);
+      Module._plat_set_view_width(viewW);
+    }
     placePlayers();
-  };
+  }
   wideEl.addEventListener('click', function () {
     wide = !wide;
     try { localStorage.setItem('skyroads.wide', wide ? '1' : '0'); } catch (e) {}
@@ -608,7 +624,8 @@
     setMenuOpen(false);
   });
   updateWideItem();
-  if (wide) document.documentElement.classList.add('wide');   // before the game starts
+  window.addEventListener('resize', applyWide);
+  document.addEventListener('fullscreenchange', applyWide);
 
   // The player list goes left of the game when the space beside it is wide
   // enough (live-ghosts.js calls this when the list changes), else over the
@@ -616,12 +633,26 @@
   var playersEl = document.getElementById('players');
   function placePlayers() {
     if (!playersEl.classList.contains('show')) return;
-    if (touchUI) { playersEl.classList.remove('outside'); return; }   // the pads are beside the game
-    playersEl.classList.add('outside');           // measure it in that style
-    if (canvas.getBoundingClientRect().left < playersEl.offsetWidth + 24)
+    // widescreen: the 4:3 game is the middle of the canvas, the backdrop
+    // runs out to its edges, so "beside the game" is inside the canvas
+    var rect = canvas.getBoundingClientRect();
+    var inset = viewW > 320 ? rect.width * (viewW - 320) / viewW / 2 : 0;
+    playersEl.style.right = playersEl.style.left = '';
+    if (touchUI) {                                // the pads are beside the game
       playersEl.classList.remove('outside');
+    } else {
+      playersEl.classList.add('outside');         // measure it in that style
+      if (rect.left + inset < playersEl.offsetWidth + 24)
+        playersEl.classList.remove('outside');
+    }
+    if (!inset) return;
+    if (playersEl.classList.contains('outside'))
+      playersEl.style.right = 'calc(100% - ' + inset + 'px + 12px)';
+    else
+      playersEl.style.left = 'calc(' + inset + 'px + 1.5%)';
   }
   window.skyPlacePlayers = placePlayers;
+  applyWide();                                    // the saved choice, before the game starts
   window.addEventListener('resize', placePlayers);
   document.addEventListener('fullscreenchange', placePlayers);
 
