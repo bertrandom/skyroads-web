@@ -319,7 +319,7 @@
       <dt>↑&nbsp;↓</dt><dd>Speed</dd>
       <dt>Space</dt><dd>Jump</dd>
       <dt>Enter</dt><dd>Select</dd>
-      <dt>Esc</dt><dd>Back</dd>
+      <dt>Esc&nbsp;`</dt><dd>Back</dd>
       <dt>W</dt><dd>Widescreen</dd>
       <dt>S</dt><dd>Sound</dd>
       <dt>&minus;&nbsp;=</dt><dd>Volume</dd>
@@ -678,10 +678,18 @@
   applyVolume();
 
   // keyboard: W switches widescreen, S the sound, - and = the volume (the game
-  // uses none of them; kept from the game so it does not see them)
+  // uses none of them; kept from the game so it does not see them), and `
+  // is Esc (which in full screen the browser keeps to leave full screen)
   ['keydown', 'keyup'].forEach(function (type) {
     window.addEventListener(type, function (e) {
       if (typing(e) || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.code === 'Backquote' || e.key === '`') {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        if (!e.repeat && typeof Module._sky_touch_key === 'function')
+          Module._sky_touch_key(6, type === 'keydown' ? 1 : 0);   // Esc
+        return;
+      }
       var k = e.key && e.key.toLowerCase();
       if (k !== 'w' && k !== 's' && k !== '-' && k !== '=' && k !== '+') return;
       e.stopImmediatePropagation();
