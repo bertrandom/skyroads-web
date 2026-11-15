@@ -322,6 +322,7 @@
       <dt>Enter</dt><dd>Select</dd>
       <dt id="esc-key">Esc</dt><dd>Back</dd>
       <dt>W</dt><dd>Widescreen</dd>
+      <dt class="fs-key">F</dt><dd class="fs-key">Full screen</dd>
       <dt>S</dt><dd>Sound</dd>
       <dt>&minus;&nbsp;=</dt><dd>Volume</dd>
     </dl>
@@ -513,7 +514,10 @@
   var rootEl = document.documentElement;
   var canFullscreen = !!((document.fullscreenEnabled || document.webkitFullscreenEnabled) &&
                          (rootEl.requestFullscreen || rootEl.webkitRequestFullscreen));
-  if (!canFullscreen) qFsEl.remove();
+  if (!canFullscreen) {                 // (and no F in the list of keys)
+    qFsEl.remove();
+    document.querySelectorAll('.fs-key').forEach(function (el) { el.remove(); });
+  }
   function toggleFullscreen() {
     try {
       var p = isFullscreen()
@@ -680,8 +684,9 @@
   volumeEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
   applyVolume();
 
-  // keyboard: W switches widescreen, S the sound, - and = the volume (the game
-  // uses none of them; kept from the game so it does not see them), and `
+  // keyboard: W switches widescreen, S the sound, F full screen, - and = the
+  // volume (the game uses none of them; kept from the game so it does not see
+  // them), and `
   // is Esc (which in full screen the browser keeps to leave full screen)
   ['keydown', 'keyup'].forEach(function (type) {
     window.addEventListener(type, function (e) {
@@ -694,7 +699,7 @@
         return;
       }
       var k = e.key && e.key.toLowerCase();
-      if (k !== 'w' && k !== 's' && k !== '-' && k !== '=' && k !== '+') return;
+      if (k !== 'w' && k !== 's' && k !== 'f' && k !== '-' && k !== '=' && k !== '+') return;
       e.stopImmediatePropagation();
       e.preventDefault();
       if (type !== 'keydown') return;
@@ -704,6 +709,7 @@
       }
       if (e.repeat) return;
       if (k === 'w') toggleWide();
+      else if (k === 'f') { if (canFullscreen) toggleFullscreen(); }
       else toggleMute();
     }, true);
   });
