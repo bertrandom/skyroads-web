@@ -26,7 +26,10 @@
   html.wide { --arw: 426; --arh: 240; }
   canvas { display: block; outline: none; image-rendering: pixelated;
            width: min(100vw, calc(100vh * var(--arw) / var(--arh))); height: auto;
-           aspect-ratio: var(--arw) / var(--arh); }
+           aspect-ratio: var(--arw) / var(--arh); flex-shrink: 0; }
+  /* widescreen: the 4:3 frame as large as in 4:3 (the view is a little wider
+     than the window, see viewWidth, and its sides are cut off) */
+  html.wide canvas { width: min(calc(100vh * var(--arw) / 240), calc(100vw * var(--arw) / 320)); }
   .chip { position: absolute; background: rgba(10, 20, 35, .85); color: #9cf;
           border: 1px solid #357; border-radius: 4px; padding: 4px 10px; }
   #status { left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 16px; }
@@ -64,7 +67,7 @@
   #name-form button:hover, #name-form button:focus-visible { background: #2c4a6e; }
   #name-msg { font-size: 11px; opacity: .8; max-width: 15em; }
   #name-msg.error { color: #f99; opacity: 1; }
-  #screen { position: relative; }
+  #screen { position: relative; flex-shrink: 0; }
   /* players on this road (live ghosts), over the top left of the game */
   #players { position: absolute; left: 1.5%; top: 2%; margin: 0; padding: .35em .6em;
              list-style: none; display: none; pointer-events: none;
@@ -596,12 +599,17 @@
     wideEl.setAttribute('aria-checked', wide);
   }
   // the view's width in game columns (240 rows tall): the window's shape,
-  // from 4:3 up to the widest painted backdrop; 16:9 at most beside the pads
+  // from 4:3 up to the widest painted backdrop; 16:9 at most beside the pads.
+  // Even, so the margins match and the frame stays in the middle, and rounded
+  // up: the frame is as large as in 4:3 and keeps its place when widescreen
+  // is switched (the canvas is cut off at the sides by under a column)
   function viewWidth() {
     var max = window.Module && typeof Module._plat_max_view_width === 'function'
               ? Module._plat_max_view_width() : 573;
     if (touchUI) max = Math.min(max, 426);
-    return Math.max(320, Math.min(max, Math.round(240 * window.innerWidth / window.innerHeight)));
+    max -= max % 2;
+    var w = 2 * Math.ceil(120 * window.innerWidth / window.innerHeight - 1e-6);
+    return Math.max(320, Math.min(max, w));
   }
   var viewW = 320;
   function applyWide() {
