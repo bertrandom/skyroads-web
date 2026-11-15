@@ -473,7 +473,8 @@
   var gearEl = document.getElementById('gear');
   var qFsEl = document.getElementById('q-fs');
   var qMuteEl = document.getElementById('q-mute');
-  var muted = false;             // mirrors the game's own sound setting
+  var muted = true;              // mirrors the game's own sound setting: off
+  try { muted = localStorage.getItem('skyroads.sound') !== 'on'; } catch (e) {}   // until on
 
   function setMenuOpen(open) {
     if (!open) closeNameForm();
@@ -530,8 +531,9 @@
   // sound_poll in port/runtime.c) and follows it, so changing it in the
   // Controls screen updates the menu too.
   var soundWanted = null;       // requested, not yet applied by the game
-  function gameSoundOn() {
-    return typeof Module._sky_sound_on === 'function' ? !!Module._sky_sound_on() : !muted;
+  function gameSoundOn() {        // (-1 until the game has read its settings)
+    var on = typeof Module._sky_sound_on === 'function' ? Module._sky_sound_on() : -1;
+    return on < 0 ? !muted : !!on;
   }
   function syncSound() {
     var on = gameSoundOn();
@@ -557,6 +559,9 @@
     if (muted && ac.state === 'running') ac.suspend();
     else if (!muted && ac.state === 'suspended' && primed === ac) ac.resume();
   }
+  // keep the output stopped from the moment SDL makes it, before the game
+  // starts (its intro sample plays whatever the setting, as in the original)
+  var earlyMute = setInterval(applyMute, 50);
   function updateMuteItem() {
     applyMute();
     applyVolume();
@@ -1058,6 +1063,7 @@
       statusEl.style.display = 'none';
       canvas.focus();
       // follow the game's sound setting (it loads skyroads.cfg at start-up)
+      clearInterval(earlyMute);
       syncSound();
       setInterval(syncSound, 300);
       applyWide();
