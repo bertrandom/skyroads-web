@@ -616,12 +616,29 @@
     }
     placePlayers();
   }
-  wideEl.addEventListener('click', function () {
+  function toggleWide() {
     wide = !wide;
     try { localStorage.setItem('skyroads.wide', wide ? '1' : '0'); } catch (e) {}
     updateWideItem();
     applyWide();
+  }
+  wideEl.addEventListener('click', function () {
+    toggleWide();
     setMenuOpen(false);
+  });
+  // keyboard: W switches widescreen, S the sound (the game uses neither key;
+  // kept from the game so it does not see them)
+  ['keydown', 'keyup'].forEach(function (type) {
+    window.addEventListener(type, function (e) {
+      if (typing(e) || e.ctrlKey || e.altKey || e.metaKey) return;
+      var k = e.key && e.key.toLowerCase();
+      if (k !== 'w' && k !== 's') return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      if (type !== 'keydown' || e.repeat) return;
+      if (k === 'w') toggleWide();
+      else toggleMute();
+    }, true);
   });
   updateWideItem();
   window.addEventListener('resize', applyWide);
