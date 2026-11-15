@@ -560,6 +560,7 @@
   }
   function updateMuteItem() {
     applyMute();
+    applyVolume();
     qMuteEl.classList.toggle('on', !muted);
     qMuteEl.setAttribute('aria-pressed', !muted);
     qMuteEl.title = muted ? 'Sound off' : 'Sound on';
@@ -641,25 +642,34 @@
     toggleWide();
     setMenuOpen(false);
   });
-  // Volume, 0-100 (the game scales its output by (v / 100)^2; 100 is the
-  // level it used to play at), remembered in this browser
+  // Volume, 1-100 (the game scales its output by (v / 100)^2; 100 is the
+  // level it used to play at), remembered in this browser.  The slider
+  // shows 0 while the sound is off: moving it up turns the sound back on,
+  // down to 0 turns it off (the volume is kept for when it comes back).
   var volumeEl = document.getElementById('volume-input');
   var volume = 60;
   try {
     var savedVolume = parseInt(localStorage.getItem('skyroads.volume'), 10);
-    if (savedVolume >= 0 && savedVolume <= 100) volume = savedVolume;
+    if (savedVolume > 0 && savedVolume <= 100) volume = savedVolume;
   } catch (e) {}
   function applyVolume() {
-    volumeEl.value = volume;
-    volumeEl.title = volume + '%';
+    if (!volumeEl) return;              // (updateMuteItem runs before this is set up)
+    volumeEl.value = muted ? 0 : volume;
+    volumeEl.title = muted ? 'Sound off' : volume + '%';
     if (window.Module && typeof Module._sky_set_volume === 'function') Module._sky_set_volume(volume);
   }
-  function setVolume(v) {
-    volume = Math.max(0, Math.min(100, Math.round(v)));
-    try { localStorage.setItem('skyroads.volume', String(volume)); } catch (e) {}
+  function changeVolume(v) {            // the slider or - / =
+    v = Math.max(0, Math.min(100, Math.round(v)));
+    if (v === 0) {
+      if (!muted) toggleMute();
+    } else {
+      volume = v;
+      try { localStorage.setItem('skyroads.volume', String(volume)); } catch (e) {}
+      if (muted) toggleMute();
+    }
     applyVolume();
   }
-  volumeEl.addEventListener('input', function () { setVolume(+volumeEl.value); });
+  volumeEl.addEventListener('input', function () { changeVolume(+volumeEl.value); });
   volumeEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
   applyVolume();
 
@@ -673,7 +683,10 @@
       e.stopImmediatePropagation();
       e.preventDefault();
       if (type !== 'keydown') return;
-      if (k === '-' || k === '=' || k === '+') { setVolume(volume + (k === '-' ? -10 : 10)); return; }
+      if (k === '-' || k === '=' || k === '+') {
+        changeVolume((muted ? 0 : volume) + (k === '-' ? -10 : 10));
+        return;
+      }
       if (e.repeat) return;
       if (k === 'w') toggleWide();
       else toggleMute();
