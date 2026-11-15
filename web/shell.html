@@ -57,6 +57,8 @@
   #menu .state { opacity: .7; }
   #menu button[hidden], #menu form[hidden], #menu .info[hidden] { display: none; }
   #menu .info { padding: 6px 8px; display: flex; justify-content: space-between; gap: 16px; }
+  #volume { align-items: center; }
+  #volume input { width: 90px; margin: 0; accent-color: #9cf; cursor: pointer; }
   #menu .state { max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #name-form { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 8px; }
   #name-form .row { display: flex; gap: 6px; }
@@ -308,6 +310,8 @@
       <div id="name-msg"></div>
     </form>
     <button id="wide-item" role="menuitemcheckbox">Widescreen <span class="state"></span></button>
+    <div id="volume" class="info"><label for="volume-input">Volume</label>
+      <input id="volume-input" type="range" min="0" max="100" step="5" aria-label="Volume"></div>
     <button id="stats-item" role="menuitem" hidden>Statistics</button>
     <button id="account-item" role="menuitem" hidden>Account <span class="state"></span></button>
     <button id="about-item" role="menuitem">About</button>
@@ -317,6 +321,9 @@
       <dt>Space</dt><dd>Jump</dd>
       <dt>Enter</dt><dd>Select</dd>
       <dt>Esc</dt><dd>Back</dd>
+      <dt>W</dt><dd>Widescreen</dd>
+      <dt>S</dt><dd>Sound</dd>
+      <dt>&minus;&nbsp;=</dt><dd>Volume</dd>
     </dl>
   </div>
   <div id="bar">
@@ -634,16 +641,40 @@
     toggleWide();
     setMenuOpen(false);
   });
-  // keyboard: W switches widescreen, S the sound (the game uses neither key;
-  // kept from the game so it does not see them)
+  // Volume, 0-100 (the game scales its output by (v / 100)^2; 100 is the
+  // level it used to play at), remembered in this browser
+  var volumeEl = document.getElementById('volume-input');
+  var volume = 60;
+  try {
+    var savedVolume = parseInt(localStorage.getItem('skyroads.volume'), 10);
+    if (savedVolume >= 0 && savedVolume <= 100) volume = savedVolume;
+  } catch (e) {}
+  function applyVolume() {
+    volumeEl.value = volume;
+    volumeEl.title = volume + '%';
+    if (window.Module && typeof Module._sky_set_volume === 'function') Module._sky_set_volume(volume);
+  }
+  function setVolume(v) {
+    volume = Math.max(0, Math.min(100, Math.round(v)));
+    try { localStorage.setItem('skyroads.volume', String(volume)); } catch (e) {}
+    applyVolume();
+  }
+  volumeEl.addEventListener('input', function () { setVolume(+volumeEl.value); });
+  volumeEl.addEventListener('keydown', function (e) { e.stopPropagation(); });   // not game input
+  applyVolume();
+
+  // keyboard: W switches widescreen, S the sound, - and = the volume (the game
+  // uses none of them; kept from the game so it does not see them)
   ['keydown', 'keyup'].forEach(function (type) {
     window.addEventListener(type, function (e) {
       if (typing(e) || e.ctrlKey || e.altKey || e.metaKey) return;
       var k = e.key && e.key.toLowerCase();
-      if (k !== 'w' && k !== 's') return;
+      if (k !== 'w' && k !== 's' && k !== '-' && k !== '=' && k !== '+') return;
       e.stopImmediatePropagation();
       e.preventDefault();
-      if (type !== 'keydown' || e.repeat) return;
+      if (type !== 'keydown') return;
+      if (k === '-' || k === '=' || k === '+') { setVolume(volume + (k === '-' ? -10 : 10)); return; }
+      if (e.repeat) return;
       if (k === 'w') toggleWide();
       else toggleMute();
     }, true);
@@ -1018,6 +1049,7 @@
       syncSound();
       setInterval(syncSound, 300);
       applyWide();
+      applyVolume();
     },
     onGameExit: function () {
       statusEl.style.display = 'block';
