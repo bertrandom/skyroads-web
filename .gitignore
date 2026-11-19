@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+
+# build outputs (web/Makefile)
+web/build/
+web/dist/
+
+# uv environment for the build helpers (web/pyproject.toml)
+web/.venv/
+!uv.lock

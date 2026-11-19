@@ -10,10 +10,10 @@
 #                   ../server; GHOST_KEY (the relay's relay.key) lets the
 #                   game sign the end of each run for the statistics
 #
-# The game code is shared with the native port in ../port.
+# The game code is shared with the native port in ../decomp/port (the decompilation, a submodule).
 EMCC  ?= emcc
-PORT  := ../port
-DATA  := ../resources/Skyroads
+PORT  := ../decomp/port
+DATA  := ../decomp/resources/Skyroads
 OUT   := dist
 BUILD := build
 GHOST_RELAY ?=
