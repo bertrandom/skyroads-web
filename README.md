@@ -1,5 +1,20 @@
 # SkyRoads on the web
 
+```mermaid
+flowchart LR
+  decomp["<b>skyroads-decomp</b><br/>decompilation and native port"]
+  web["<b>skyroads-web</b><br/>web port, ghost relay, deploy"]
+  pocket["<b>skyroads-pocket</b><br/>Analogue Pocket core"]
+  web -- "decomp/ submodule" --> decomp
+  pocket -- "decomp/ submodule" --> decomp
+  click decomp "https://github.com/bertrandom/skyroads-decomp"
+  click pocket "https://github.com/bertrandom/skyroads-pocket"
+  classDef here stroke-width:3px
+  class web here
+```
+
+This repository is **skyroads-web**. The others: [skyroads-decomp](https://github.com/bertrandom/skyroads-decomp) · [skyroads-pocket](https://github.com/bertrandom/skyroads-pocket).
+
 The browser version of SkyRoads, played at <https://skyroads.org>: the
 game's decompiled code built for WebAssembly with Emscripten, with live
 ghosts of other players through a small relay, and the script that deploys
