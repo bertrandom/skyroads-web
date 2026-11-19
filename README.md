@@ -25,7 +25,7 @@ next to this one; while that is a folder on this machine rather than a
 remote, git wants `-c protocol.file.allow=always` on the submodule commands.
 
 The web port's own code in the decompilation (live ghosts in `port/ghost.c`,
-signed runs in `port/sign.c`, the page's hooks in `port/platform.c`, under
+signed runs in `port/sign.c`, the page's hooks in `port/sdl/platform.c`, under
 `#ifdef __EMSCRIPTEN__`) reaches this build when the submodule is moved to
 a newer commit of it.
 

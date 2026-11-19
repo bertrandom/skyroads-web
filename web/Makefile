@@ -59,6 +59,9 @@ $(BUILD)/platform.o: $(PORT)/wide_bg.h
 
 $(BUILD)/%.o: $(PORT)/%.c $(PORT)/compat.h $(PORT)/protos.h $(PORT)/image_data.h | $(BUILD)
 	$(EMCC) $(CFLAGS) -c $< -o $@
+# the platform layer (main.c, platform.c, hw.c, audio.c), shared with the native port
+$(BUILD)/%.o: $(PORT)/sdl/%.c $(PORT)/compat.h $(PORT)/protos.h $(PORT)/image_data.h | $(BUILD)
+	$(EMCC) $(CFLAGS) -c $< -o $@
 
 $(BUILD):
 	mkdir -p $(BUILD)

@@ -189,7 +189,7 @@
 
   /* settings menu (shell.html) */
   /* statistics: the relay counts your race starts; finished roads are
-   * reported here (from the game's save, see cfg_store in port/platform.c) */
+   * reported here (from the game's save, see cfg_store in port/sdl/platform.c) */
   var statsReply = null;
   Module.skyRoadCompleted = function (r) {
     if (open()) ws.send(JSON.stringify({ t: 'completed', road: r }));
@@ -290,7 +290,7 @@
     } catch (e) {}
     if (changed && Module._sky_reload_cfg) Module._sky_reload_cfg();
   }
-  /* the game saved skyroads.cfg (port/platform.c): send it to the account */
+  /* the game saved skyroads.cfg (port/sdl/platform.c): send it to the account */
   Module.skySaved = function () { sendSync(false); };
 
   function passkeyPrompt(m) {
